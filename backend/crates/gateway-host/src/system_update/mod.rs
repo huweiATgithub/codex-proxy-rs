@@ -50,7 +50,7 @@ pub use self::release::validate_download_url;
 
 const APP_BINARY_NAME: &str = "codex-proxy-rs";
 const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com/repos";
-const DEFAULT_UPDATE_REPOSITORY: &str = "zyycn/codex-proxy-rs";
+const DEFAULT_UPDATE_REPOSITORY: &str = "huweiATgithub/codex-proxy-rs";
 const OFFICIAL_PLUGIN_MANIFEST: &str = "plugin-release-manifest.json";
 const MAX_OFFICIAL_PLUGIN_MANIFEST_SIZE: u64 = 256 * 1024;
 

@@ -77,11 +77,11 @@ flowchart LR
 mkdir -p codex-proxy-rs/deploy && cd codex-proxy-rs
 
 # 只解析一次最新正式版本，确保两个文件来自同一 Release。
-CPR_RELEASE_URL="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/zyycn/codex-proxy-rs/releases/latest)"
+CPR_RELEASE_URL="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/huweiATgithub/codex-proxy-rs/releases/latest)"
 CPR_RELEASE_TAG="${CPR_RELEASE_URL##*/}"
-curl -fsSL "https://github.com/zyycn/codex-proxy-rs/releases/download/${CPR_RELEASE_TAG}/compose.yaml" \
+curl -fsSL "https://github.com/huweiATgithub/codex-proxy-rs/releases/download/${CPR_RELEASE_TAG}/compose.yaml" \
   -o deploy/compose.yaml
-curl -fsSL "https://github.com/zyycn/codex-proxy-rs/releases/download/${CPR_RELEASE_TAG}/config.example.yaml" \
+curl -fsSL "https://github.com/huweiATgithub/codex-proxy-rs/releases/download/${CPR_RELEASE_TAG}/config.example.yaml" \
   -o deploy/config.example.yaml
 
 install -d -m 0750 .runtime/postgres .runtime/redis
@@ -562,7 +562,7 @@ YAML 中显式配置的值优先于对应环境变量
 
 Compose 提供以下在线更新运行参数：
 
-- `CPR_UPDATE_REPOSITORY`：只接受 `owner/repository`；默认 `zyycn/codex-proxy-rs`
+- `CPR_UPDATE_REPOSITORY`：只接受 `owner/repository`；默认 `huweiATgithub/codex-proxy-rs`
 - `CPR_GITHUB_API_BASE`：正式环境必须为 `https://api.github.com/repos`
 - `CPR_UPDATE_EXE_PATH`、`CPR_WEB_DIST_DIR`：分别指向容器内二进制和前端静态目录；
   `CPR_WEB_DIST_DIR` 同时供页面服务与更新器使用，相对路径以 `deploy/config.yaml` 所在目录为基准
