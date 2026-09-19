@@ -136,6 +136,23 @@ git push -u origin patches/v3.11.0
 此后在 `patches/v3.11.0` 上维护新补丁。升级过程中若旧分支又新增了修改，应先把缺失的修改
 带到新分支并重新验证，避免新分支成为维护入口后遗失它们。
 
+委托补丁升级与发版时，可复制以下提示，将 `<current-upstream-tag>` 和 `<next-upstream-tag>`
+替换为实际版本 tag（包含 `v` 前缀）：
+
+```text
+Read docs/patch-guide.md (in the current patch branch) and follow it as the authority for this fork’s branch, tag, and release procedures. Its instructions override the upstream release procedures in CONTRIBUTING.md and the release skill.
+
+Task Context:
+
+- Current patch branch: patches/<current-upstream-tag>
+- Next upstream tag: <next-upstream-tag>
+- Derive next patch branch name and next release tag
+- Carry forward patches from the current patch branch to the new patch branch
+- Tag and release new patch branch
+
+Keep the diff minimal. I authorize the necessary changes, commits, pushes, tagging, and workflow dispatch. Monitor CI and publication through completion, perform the guide’s release verification, and report the results with links.
+```
+
 ## 从补丁准备发行
 
 以下以 `v3.11.0` 为例；首次发布 `v3.10.0` 使用同样步骤并替换版本号。
