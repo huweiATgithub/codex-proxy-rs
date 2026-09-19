@@ -1,0 +1,230 @@
+# Fork 补丁维护指南
+
+本指南用于在 `huweiATgithub/codex-proxy-rs` 中维护个人补丁，并采用上游
+`zyycn/codex-proxy-rs` 的发行版本。每次发行由选定的上游 tag 加上本 fork 的补丁组成，
+使用与上游相同的版本号和公开 tag 名称。
+
+下文以当前基线 `v3.10.0`、下一次采用的基线 `v3.11.0` 为例。版本号是示例，执行时应替换为
+实际选定且已经存在的上游发行。命令从仓库根目录执行；提交和验证约定见 [贡献与审查](../CONTRIBUTING.md)。
+
+## 分支与 tag 的职责
+
+| 引用 | 职责 |
+| --- | --- |
+| `origin` | 本 fork 的远端 |
+| `upstream` | 原仓库的远端 |
+| `main` | 上游 `main` 的副本，只同步上游提交 |
+| `refs/upstream/tags/v3.10.0` | 本地保存的原始上游 tag |
+| `patches/v3.10.0` | 原始上游 `v3.10.0` 加上可重放的个人补丁 |
+| `refs/tags/v3.10.0` | 本 fork 已发布版本的固定引用 |
+
+两个仓库的 `v3.10.0` 名称相同，指向的提交不同。原始上游 tag 放在独立的本地引用中，
+避免与本 fork 的公开 tag 冲突。不要将上游 tag 批量导入本地 `refs/tags/*` 或推送到本 fork。
+
+补丁分支保持线性提交，每个独立主题一个提交；应用代码、发行工具和 fork 配置都属于可重放补丁。
+每次升级在新分支首次推送前，把同一主题的修复、适配、测试和文档合并，保留该主题当前有效的完整内容。
+README 安装 URL 的版本更新和维护指南调整并入 fork 配置主题，不单独积累发行准备提交。
+日常维护可以追加提交，在下一次升级的新分支中整理，不改写旧分支或已发布 tag。
+
+每个主题的提交正文应足以指导下一次移植，说明：
+
+- 目标与非目标：解决什么问题、保留哪些行为、哪些事项不属于该主题
+- 职责与合同：状态和规则由谁拥有，输入、输出、持久化、失败及兼容性有哪些必须维持的保证
+- 冲突处理：哪些行为必须保留、哪些实现位置可随上游调整，以及何时可认定上游已完整吸收该主题
+- 验证：用哪些测试或运行路径确认移植后的合同仍成立
+
+已有 API、架构或部署文档负责详细合同，提交正文保留移植所需摘要并指向对应章节；
+没有现成归属且内容较长时，可随主题提交附带说明文档。后续修正主题时同步更新其说明，
+不能只写本次改了哪些文件，也不能把历史冲突处理当作长期合同。
+
+`release/version.yaml` 和 `release/notes.md` 保持对应上游 tag 的内容。
+`main` 上尚未发行的提交不合入这些版本分支。
+
+## 准备远端并同步 main
+
+需要 Git；通过命令行发版还需要已认证的 GitHub CLI。开始前查看 `git status`，
+先处理未提交内容再切换、同步或重放分支；不要让一次升级顺带暂存或丢弃其他工作。
+
+用 `git remote -v` 核对 `origin` 指向本 fork。首次添加上游远端：
+
+```bash
+git remote add --no-tags upstream https://github.com/zyycn/codex-proxy-rs.git
+```
+
+如果 `upstream` 已存在，核对其地址并关闭自动获取同名 tag：
+
+```bash
+git config remote.upstream.tagOpt --no-tags
+```
+
+同步 `main` 与补丁升级是独立操作。需要更新副本时执行：
+
+```bash
+git fetch --no-tags upstream &&
+git switch main &&
+git merge-base --is-ancestor HEAD upstream/main &&
+git merge --ff-only upstream/main &&
+git push origin main
+```
+
+祖先检查保证本地 `main` 没有独有提交；仅执行 `merge --ff-only` 不能排除本地已领先的情况。
+任一步失败就检查分支差异，不用 merge commit、reset 或强推来掩盖分歧。
+
+## 创建和维护补丁分支
+
+首次采用一个上游版本时，先取回原始 tag，再从它创建补丁分支：
+
+```bash
+git fetch --no-tags upstream \
+  refs/tags/v3.10.0:refs/upstream/tags/v3.10.0 &&
+git switch -c patches/v3.10.0 'refs/upstream/tags/v3.10.0^{commit}'
+```
+
+若该补丁分支已存在，切换到现有分支继续维护，不重复创建。新克隆中只有远端分支时，使用：
+
+```bash
+git fetch --no-tags origin &&
+git switch --track -c patches/v3.10.0 origin/patches/v3.10.0
+```
+
+新增或修复个人补丁时，在当前 `patches/*` 分支工作，或从它分出功能分支、向它提交 PR。
+补丁 PR 以对应的 `patches/*` 为目标，使用 squash 或 rebase 保持补丁历史线性；其余步骤见 [PR 流程](../CONTRIBUTING.md#pr-流程)。按实际修改执行验证，
+只暂存本次修改的文件，以英文 Conventional Commits 提交；普通补丁不更新版本号或发行说明。
+
+检查相对原始上游的完整差异，确认只有需要维护的修改：
+
+```bash
+git log --oneline refs/upstream/tags/v3.10.0..patches/v3.10.0
+git diff refs/upstream/tags/v3.10.0 patches/v3.10.0
+```
+
+验证并提交完成后，保存补丁分支：
+
+```bash
+git push -u origin patches/v3.10.0
+```
+
+如果本 fork 的 `v3.10.0` 已发布，后续补丁仍可在该补丁分支维护，随下一次采用的上游版本发行。
+不要移动已发布的 tag 来容纳新补丁。两次上游发行之间需要独立补丁版本时，应先另行确定版本方案；
+当前发布入口只支持与选定上游版本同名的发行。
+
+## 升级到下一个上游 tag
+
+先确认旧补丁分支已包含所有要保留的提交、工作区干净，并取回新旧两个原始 tag。
+新克隆不会自动带有 `refs/upstream/tags/*`，不能用本 fork 的同名 tag 代替它们。
+
+```bash
+git fetch --no-tags upstream \
+  refs/tags/v3.10.0:refs/upstream/tags/v3.10.0 \
+  refs/tags/v3.11.0:refs/upstream/tags/v3.11.0 &&
+git switch -c patches/v3.11.0 patches/v3.10.0 &&
+git rebase -i refs/upstream/tags/v3.10.0 &&
+git diff --exit-code patches/v3.10.0 HEAD &&
+git rebase --onto refs/upstream/tags/v3.11.0 refs/upstream/tags/v3.10.0
+```
+
+新分支从旧补丁分支的最新提交创建，以包含上次发行后继续维护的补丁。
+第一次交互式 rebase 在旧上游基线上按主题整理提交，使用 squash 或 fixup 合并同主题内容，
+并更新主题提交说明；已经整理好的主题可直接保留。此时不改文件内容，后续的 diff 必须为空，
+证明历史整理未丢失补丁，再把整理后的主题重放到新上游 tag。
+发行说明不进入补丁提交，因此不会随补丁重放。旧补丁分支和已发布 tag 保持原样。
+
+遇到冲突时，先读该主题提交说明和所属文档，再沿新上游的调用关系定位当前 owner，
+判断能否同时保留补丁合同与上游新增行为。若两者无法同时满足，必须改变主题目标、职责边界或合同才能继续，
+属于根本性冲突；即使 Git 自动合并成功，也必须检查这类语义冲突。
+
+出现根本性冲突时，立即停止本次补丁移植及后续提交、推送和发布，保留当前状态，向维护者汇报
+涉及的主题与代码或文档位置、双方不能同时满足的要求、影响及可选方案，请求人工判断并等待明确决定。
+不得自行舍弃补丁、覆盖上游行为、放宽合同或跳过提交来继续。获准继续后，将决定体现到实现及主题说明中。
+
+能够同时保留双方行为和合同的普通实现冲突，可按新上游结构调整，不直接用旧文件覆盖新实现。
+只暂存解决冲突的文件，然后执行 `git rebase --continue`。
+只有确认上游已经完整提供该补丁的行为，或该补丁已不再需要时，才删除相应补丁；不要为了通过 rebase 而直接跳过冲突。
+放弃本次尝试用 `git rebase --abort`，新分支回到此次重放前的状态。
+
+重放完成后，比较补丁的变化及新版本相对上游的完整差异：
+
+```bash
+git range-diff \
+  refs/upstream/tags/v3.10.0..patches/v3.10.0 \
+  refs/upstream/tags/v3.11.0..patches/v3.11.0
+git diff refs/upstream/tags/v3.11.0 patches/v3.11.0
+```
+
+合并提交会改变 range-diff 的对应关系，不能单靠逐提交匹配证明内容保留；
+结合整理前后的 tree 等价检查、已被上游吸收的内容和重放后的完整差异判断。
+无冲突不等于行为正确。检查每项补丁是否仍有必要、是否适配新的调用关系，并按
+[验证约定](../CONTRIBUTING.md#验证) 运行相关检查和行为验收。维护本 fork 的发行补丁时，
+还要核对镜像、安装器和更新器仍指向本 fork，并将 README 安装 URL 中的补丁分支更新为 `patches/v3.11.0`。
+将版本 URL 更新并入 fork 配置主题，将移植修正并入对应功能主题；可用 fixup 提交和
+`git rebase -i --autosquash refs/upstream/tags/v3.11.0` 完成。首次推送前再次核对每个主题只有一个提交，
+提交说明与最终实现一致，整理本身不改变已验证的 tree。
+
+验证完成后推送新补丁分支：
+
+```bash
+git push -u origin patches/v3.11.0
+```
+
+此后在 `patches/v3.11.0` 上维护新补丁。升级过程中若旧分支又新增了修改，应先把缺失的修改
+带到新分支并重新验证，避免新分支成为维护入口后遗失它们。
+
+委托补丁升级与发版时，可复制以下提示，只需将 `<next-upstream-tag>` 替换为实际版本 tag
+（包含 `v` 前缀）；当前补丁分支由代理同步远端引用后，从本地和 `origin` 的 `patches/*` 分支按版本号确定：
+
+```text
+Refresh origin branch refs, detect the latest patch branch by version from local and origin patches/* branches, and read docs/patch-guide.md in that branch. Follow it as the authority for this fork’s branch, tag, and release procedures. Its instructions override the upstream release procedures in CONTRIBUTING.md and the release skill.
+
+Task Context:
+
+- Next upstream tag: <next-upstream-tag>
+- Derive next patch branch name and next release tag
+- Carry forward patches from the current patch branch to the new patch branch
+- Tag and release new patch branch
+
+Keep the diff minimal. I authorize the necessary changes, commits, pushes, tagging, and workflow dispatch. Monitor CI and publication through completion, perform the guide’s release verification, and report the results with links.
+```
+
+## 从补丁准备发行
+
+以下以 `v3.11.0` 为例；首次发布 `v3.10.0` 使用同样步骤并替换版本号。
+本 fork 先创建发行 tag，再触发发布工作流。仓库保留的 `release/publish` 是上游入口，会修改版本、创建提交和 tag 并推送，
+不用于本指南的 fork 发版。
+
+确认工作区干净、补丁已提交并验证通过；在补丁分支的当前提交创建 tag，一起推送分支和 tag：
+
+```bash
+git switch patches/v3.11.0 &&
+git tag -a v3.11.0 -m 'Release v3.11.0' &&
+git push --atomic origin refs/heads/patches/v3.11.0 refs/tags/v3.11.0
+```
+
+已有同名 tag 时先核对其提交，不重复创建或强制覆盖。推送失败后先核对远端分支和 tag，确认状态再重试推送。
+`release/version.yaml` 和 `release/notes.md` 保留上游内容。
+
+推送成功后，在 GitHub Actions 的 Release 工作流中选择 `patches/v3.11.0`，填写 `tag=v3.11.0`。
+
+也可通过命令行触发：
+
+```bash
+gh workflow run release.yml \
+  --repo huweiATgithub/codex-proxy-rs \
+  --ref patches/v3.11.0 \
+  --raw-field tag=v3.11.0
+```
+
+该命令直接触发真实发版，不检查本地工作区或替你推送代码。
+所选补丁分支提供工作流定义，`tag` 输入决定发布源码。工作流检出已推送的 tag，将其解析为提交 SHA，
+沿用上游流程对该提交执行检查、构建和发布 GitHub Release、镜像及附件。
+后续推进补丁分支不会改变 tag 指向的源码；触发成功也不等于产物已发布。
+
+中断或失败时先核对对应 run、远端 tag 和 GitHub Release，确认已完成的步骤。重试已有 run 的失败任务，
+例如 `gh run rerun <run-id> --failed --repo huweiATgithub/codex-proxy-rs`，沿用原始 tag 输入；
+不要删除 tag、强推或改版本号来消除报错。
+
+若需要代码修复，直接在对应补丁分支修改并验证。重新 dispatch 同一 tag 仍构建该 tag 的源码，
+不会包含分支上的新提交；不要移动已发布的 tag，独立补丁修订需另行确定版本方案。
+发布完成后核对 run 的固定提交与 tag 一致，检查 GitHub Release 正文，并对照 `release/platforms.yaml`
+和工作流确认镜像、附件及校验和齐全。仍在构建、失败或缺少产物时不算发行完成；发布也不代表运行实例已经升级。
+保留已发布 tag；旧补丁分支可在确认新分支包含所需修改、对应发版验收完成后归档或删除。
+删除分支不改变 tag 固定的发行提交。
