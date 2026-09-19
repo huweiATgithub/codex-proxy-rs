@@ -5,6 +5,7 @@
 | 任务意图与常见说法 | 必用技能 |
 | --- | --- |
 | 开发、实现、修复、排查报错、审查问题或代码、修改文档 | [cpr-dev-guide](.agents/skills/cpr-dev-guide/SKILL.md) |
+| Fork 补丁开发、修复、审查或移植 | [cpr-fork-patch](.agents/skills/cpr-fork-patch/SKILL.md)，同时执行 cpr-dev-guide |
 | 提交／提个 PR、准备或更新 PR、看下 PR、回复 PR 讨论、处理 PR 审查意见 | [cpr-github-pr](.agents/skills/cpr-github-pr/SKILL.md)；需要修改时同时执行 cpr-dev-guide |
 | 提 Issue、反馈到仓库、把问题或建议整理成 Issue、补充或回复 Issue | [cpr-github-issue](.agents/skills/cpr-github-issue/SKILL.md) |
 | 写网关插件、修改插件能力、排查插件接入、打包插件 | [cpr-plugin-dev](.agents/skills/cpr-plugin-dev/SKILL.md)，同时执行 cpr-dev-guide |
