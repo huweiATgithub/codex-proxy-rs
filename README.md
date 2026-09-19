@@ -44,7 +44,7 @@
 请确保当前用户能访问 Docker，并可通过 `sudo` 或 root 设置目录权限。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/huweiATgithub/codex-proxy-rs/patches/v3.10.0/deploy/install.sh -o install.sh && bash install.sh
+curl -fsSL https://raw.githubusercontent.com/huweiATgithub/codex-proxy-rs/patches/v3.11.0/deploy/install.sh -o install.sh && bash install.sh
 ```
 
 [安装脚本](deploy/install.sh) 默认安装到当前目录下的 `codex-proxy-rs/`，下载同一正式 Release 的部署文件，
