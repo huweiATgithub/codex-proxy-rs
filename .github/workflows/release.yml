@@ -17,7 +17,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: zyycn/codex-proxy-rs
+  IMAGE_NAME: huweiatgithub/codex-proxy-rs
 
 jobs:
   release-info:
@@ -132,7 +132,8 @@ jobs:
           docker_matrix = JSON.generate({ "include" => docker_platform_jobs })
           non_docker_matrix = JSON.generate({ "include" => non_docker_platform_jobs })
           current_sort_key = version_sort_key(version)
-          tags, status = Open3.capture2("git", "tag", "--list", "#{tag_prefix}*", "--merged", "HEAD")
+          # 补丁在各上游版本上重放，上一发行标签不一定是当前提交的祖先。
+          tags, status = Open3.capture2("git", "tag", "--list", "#{tag_prefix}*")
           fail("failed to list git tags") unless status.success?
           previous_tag = tags
             .lines
@@ -504,7 +505,7 @@ jobs:
             org.opencontainers.image.title=Codex Proxy RS
             org.opencontainers.image.version=${{ needs.release-info.outputs.version }}
             org.opencontainers.image.revision=${{ needs.release-info.outputs.git_sha }}
-            org.opencontainers.image.source=https://github.com/zyycn/codex-proxy-rs
+            org.opencontainers.image.source=https://github.com/huweiATgithub/codex-proxy-rs
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ needs.release-info.outputs.git_sha }}-${{ matrix.arch }}
 
       - name: Verify exact app image digest
