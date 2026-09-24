@@ -4,7 +4,8 @@ export type ProviderRequestProfile = Record<string, unknown>
 export type ProviderRequestProfiles = Record<string, ProviderRequestProfile>
 export type ProviderRequestProfileUpdates = Record<string, ProviderRequestProfile | null>
 
-export interface ClientProfileSelection {
+export interface LegacyClientProfileSelection {
+  mode?: undefined
   client: 'desktop' | 'cli'
   platform: 'macos' | 'linux' | 'windows'
   versionMode: 'latest' | 'fixed'
@@ -15,6 +16,45 @@ export interface ClientProfileSelection {
   codexVersion: string | null
   desktopVersion: string | null
   desktopBuild: string | null
+}
+
+export interface ClientProfileCatalogEntry {
+  client: 'desktop' | 'cli' | 'exec'
+  environment: string
+  release: string
+  userAgent: string
+}
+
+export interface CatalogClientProfileSelection {
+  mode: 'catalog'
+  versionMode: 'latest' | 'fixed'
+  entry: ClientProfileCatalogEntry
+}
+
+export interface CustomClientProfileSelection {
+  mode: 'custom'
+  userAgent: string
+  originator?: string | null
+  codexVersion?: string | null
+}
+
+export type ClientProfileSelection = LegacyClientProfileSelection | CatalogClientProfileSelection | CustomClientProfileSelection
+
+export interface ClientProfileCatalogSource {
+  source: 'desktop' | 'cli'
+  checkedAt: string | null
+  updatedAt: string | null
+  error: string | null
+}
+
+export interface ClientProfileOptions {
+  presets: ClientProfilePreset[]
+  globalConfiguration: ClientProfileSelection
+  catalog: {
+    entries: ClientProfileCatalogEntry[]
+    sources: ClientProfileCatalogSource[]
+    releaseLimit: number
+  }
 }
 
 export interface ClientProfilePreview {
@@ -29,24 +69,34 @@ export interface ClientProfilePreview {
   desktopVersion: string | null
   desktopBuild: string | null
   userAgent: string
-  versionSource: 'official' | 'custom'
+  versionSource: 'official' | 'custom' | 'catalog'
+  recognized: boolean
   verifiedAt: string | null
   checkedAt: string | null
   error: string | null
 }
 
 export interface ClientProfilePreset {
-  configuration: ClientProfileSelection
+  configuration: LegacyClientProfileSelection
   automaticAvailable: boolean
   reason: string | null
-  defaults: Pick<ClientProfileSelection, 'originator' | 'osVersion' | 'arch' | 'terminal'>
+  defaults: Pick<LegacyClientProfileSelection, 'originator' | 'osVersion' | 'arch' | 'terminal'>
 }
 
 export function getClientProfileOptions() {
-  return request<{ presets: ClientProfilePreset[], globalConfiguration: ClientProfileSelection }>({
+  return request<ClientProfileOptions>({
     url: '/api/admin/settings/client-profiles/openai',
     method: 'GET',
     silent: true,
+  })
+}
+
+export function refreshClientProfileCatalog() {
+  return request<ClientProfileOptions>({
+    url: '/api/admin/settings/client-profiles/openai/refresh',
+    method: 'POST',
+    silent: true,
+    timeout: 135000,
   })
 }
 

@@ -50,6 +50,14 @@ pub trait SettingsService: Send + Sync {
     ) -> Result<gateway_core::account::OpaqueProviderData, AdminError> {
         Err(AdminError::invalid("当前 Provider 不支持客户端身份配置"))
     }
+    async fn refresh_client_profiles(
+        &self,
+        _provider: &str,
+    ) -> Result<gateway_core::account::OpaqueProviderData, AdminError> {
+        Err(AdminError::invalid(
+            "当前 Provider 不支持客户端身份目录刷新",
+        ))
+    }
     async fn load(&self) -> Result<RuntimeSettings, AdminError>;
     async fn replace(
         &self,
@@ -287,6 +295,17 @@ impl SettingsService for DefaultSettingsService {
             serde_json::Value::Object(configuration.into_inner()),
         );
         Ok(gateway_core::account::OpaqueProviderData::new(options))
+    }
+
+    async fn refresh_client_profiles(
+        &self,
+        provider: &str,
+    ) -> Result<gateway_core::account::OpaqueProviderData, AdminError> {
+        self.profile_provider(provider)?
+            .refresh_client_profiles()
+            .await
+            .map_err(|error| super::map_provider_error(error, "client profile"))?;
+        self.client_profile_options(provider).await
     }
 
     async fn preview_client_profile(

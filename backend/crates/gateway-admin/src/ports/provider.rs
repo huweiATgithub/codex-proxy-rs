@@ -138,6 +138,11 @@ pub trait ProviderAdmin: Send + Sync {
         None
     }
 
+    /// 刷新可重建的客户端目录；不修改用户保存的选择。
+    async fn refresh_client_profiles(&self) -> Result<(), ProviderAdminError> {
+        Err(ProviderAdminError::new(ProviderAdminErrorKind::Unsupported))
+    }
+
     /// 校验并投影客户端身份，结果不含认证或账号材料。
     fn preview_client_profile(
         &self,

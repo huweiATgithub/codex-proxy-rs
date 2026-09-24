@@ -207,6 +207,7 @@ impl ClientProfileSelection {
                 .terminal
                 .clone()
                 .unwrap_or_else(|| "unknown".to_owned()),
+            exact_user_agent: None,
             residency: state.snapshot().residency,
             verified_at: release.verified_at.unwrap_or(DateTime::UNIX_EPOCH),
         })
@@ -228,7 +229,13 @@ impl CodexWireProfileState {
         &self,
         configuration: &OpaqueProviderData,
     ) -> Result<OpaqueProviderData, ClientProfileError> {
-        let selection = ClientProfileSelection::parse(configuration)?;
+        super::identity::RequestProfileSelection::parse(configuration)?.preview(self)
+    }
+
+    pub(super) fn preview_legacy_selection(
+        &self,
+        selection: &ClientProfileSelection,
+    ) -> Result<OpaqueProviderData, ClientProfileError> {
         let profile = selection.resolve(self)?;
         let status = self.client_release_status(
             selection.client,
@@ -275,7 +282,7 @@ impl CodexWireProfileState {
                 }));
             }
         }
-        object(&json!({ "presets": presets }))
+        object(&json!({ "presets": presets, "catalog": self.catalog().snapshot() }))
     }
 }
 
@@ -290,6 +297,12 @@ pub(crate) fn object(value: &impl Serialize) -> Result<OpaqueProviderData, Clien
 pub enum ClientProfileError {
     #[error("客户端身份字段或版本组合不合法")]
     Invalid,
+    #[error("User-Agent 必须是 1 至 4096 字节的单行 ASCII 文本，且首尾不能含空白")]
+    InvalidUserAgent,
+    #[error("无法识别 User-Agent，请补充 originator 和有效的 Core version")]
+    CompanionHeadersRequired,
+    #[error("originator 或 Core version 与 User-Agent 不一致")]
+    CompanionHeadersConflict,
     #[error("此客户端、平台与架构尚无已核验发布版本，请选择固定版本或稍后重试")]
     ReleaseUnavailable,
 }

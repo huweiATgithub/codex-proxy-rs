@@ -5,11 +5,13 @@ use std::sync::Mutex;
 use super::*;
 use crate::transport::profile::cli_release::CliReleaseService;
 use crate::transport::profile::platform_release::PlatformDesktopReleaseService;
+use crate::transport::profile::ua_catalog::UaCatalogService;
 
 pub(crate) struct ClientReleaseServices {
     pub desktop: Arc<CodexDesktopReleaseService>,
     pub cli: Arc<CliReleaseService>,
     pub platforms: Arc<PlatformDesktopReleaseService>,
+    pub ua_catalog: Arc<UaCatalogService>,
 }
 
 pub(super) const WORKER_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
@@ -49,6 +51,23 @@ pub(crate) fn worker_contributions(
         )?));
     }
     contributions.extend([
+        WorkerContribution::Registration(WorkerRegistration::try_new(
+            WorkerId::try_new(WorkerKind::QuotaCatalogHealth, "openai-ua-catalog")?,
+            WorkerRunnable::Scheduled {
+                schedule: WorkerSchedule::try_new(
+                    APPCAST_POLL_INTERVAL,
+                    WORKER_INITIAL_BACKOFF,
+                    WORKER_MAXIMUM_BACKOFF,
+                    WORKER_LEASE_TTL,
+                    WORKER_LEASE_RENEWAL,
+                )?,
+                // 目录直接供当前进程解析请求；不能由另一进程的租约跳过本地更新。
+                lease: None,
+                task: Box::new(OpenAiUaCatalogTask {
+                    service: releases.ua_catalog,
+                }),
+            },
+        )?),
         WorkerContribution::Registration(scheduled_registration(
             WorkerId::try_new(
                 WorkerKind::QuotaCatalogHealth,
@@ -329,6 +348,27 @@ impl ScheduledTask for OpenAiCliReleaseTask {
 
 struct OpenAiPlatformDesktopReleaseTask {
     service: Arc<PlatformDesktopReleaseService>,
+}
+
+struct OpenAiUaCatalogTask {
+    service: Arc<UaCatalogService>,
+}
+
+impl ScheduledTask for OpenAiUaCatalogTask {
+    fn run_cycle(&self, context: WorkerCycleContext) -> BoxFuture<'_, Result<(), WorkerTaskError>> {
+        Box::pin(async move {
+            tokio::select! {
+                () = context.cancellation().cancelled() => {},
+                result = self.service.refresh() => {
+                    if let Err(error) = result {
+                        // 状态保留源错误和旧目录；下个正常周期再检查，避免短退避耗尽 GitHub 配额。
+                        tracing::warn!(error = %error, "OpenAI UA catalog refresh failed");
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
 }
 impl ScheduledTask for OpenAiPlatformDesktopReleaseTask {
     fn run_cycle(&self, context: WorkerCycleContext) -> BoxFuture<'_, Result<(), WorkerTaskError>> {
