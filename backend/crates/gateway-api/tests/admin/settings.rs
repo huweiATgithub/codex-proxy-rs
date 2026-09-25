@@ -331,31 +331,6 @@ async fn settings_get_should_preserve_global_model_mappings() {
 }
 
 #[tokio::test]
-async fn client_profile_refresh_requires_admin_and_rejects_unknown_provider() {
-    let fixture = AdminTestFixture::new().await;
-    let response = app(fixture.state())
-        .oneshot(request(
-            Method::POST,
-            "/api/admin/settings/client-profiles/unknown/refresh",
-            None,
-        ))
-        .await
-        .expect("unauthenticated catalog refresh response");
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-
-    fixture.auth.insert_session("valid-session");
-    let response = app(fixture.state())
-        .oneshot(request(
-            Method::POST,
-            "/api/admin/settings/client-profiles/unknown/refresh",
-            None,
-        ))
-        .await
-        .expect("unknown provider catalog refresh response");
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
 async fn settings_post_should_replace_global_model_mappings() {
     let fixture = AdminTestFixture::new().await;
     fixture.auth.insert_session("valid-session");

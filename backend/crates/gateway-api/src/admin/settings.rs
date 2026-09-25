@@ -409,10 +409,6 @@ where
             "/api/admin/settings/client-profiles/{provider}/preview",
             post(preview_client_profile::<S>),
         )
-        .route(
-            "/api/admin/settings/client-profiles/{provider}/refresh",
-            post(refresh_client_profiles::<S>),
-        )
         .route("/api/admin/settings/update", post(update_settings::<S>))
         .route(
             "/api/admin/settings/client-downloads/codex-desktop/windows",
@@ -824,26 +820,6 @@ where
         .admin_services()
         .settings()
         .client_profile_options(&provider)
-        .await
-        .map_err(map_service_error)?;
-    Ok(AdminResponse::new(
-        StatusCode::OK,
-        AdminEnvelope::ok(result.into_inner()),
-    ))
-}
-
-async fn refresh_client_profiles<S>(
-    _auth: AdminAuth,
-    Path(provider): Path<String>,
-    State(state): State<S>,
-) -> Result<impl IntoResponse, AdminError>
-where
-    S: SessionState + Send + Sync,
-{
-    let result = state
-        .admin_services()
-        .settings()
-        .refresh_client_profiles(&provider)
         .await
         .map_err(map_service_error)?;
     Ok(AdminResponse::new(

@@ -876,3 +876,79 @@ async fn concurrent_request_profiles_emit_independent_http_identities() {
         );
     }
 }
+
+#[tokio::test]
+async fn tui_and_exec_send_the_same_complete_identity_over_http_and_websocket() {
+    use provider_openai::transport::profile::selection::{
+        CliEntry, ClientKind, ClientPlatform, ClientProfileSelection, VersionMode,
+    };
+    for (entry, name) in [(CliEntry::Tui, "codex-tui"), (CliEntry::Exec, "codex_exec")] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let expected =
+            format!("{name}/0.157.0 (Alpine Linux 3.24.1; x86_64) unknown ({name}; 0.157.0)");
+        let server = tokio::spawn(async move {
+            let (mut http, _) = listener.accept().await.unwrap();
+            let headers = read_http_request(&mut http).await;
+            assert_eq!(
+                read_header_value(&headers, "user-agent"),
+                Some(expected.as_str())
+            );
+            assert_eq!(read_header_value(&headers, "originator"), Some(name));
+            assert_eq!(read_header_value(&headers, "version"), Some("0.157.0"));
+            write_completed_sse_response(&mut http).await;
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = accept_codex_test_websocket_with(stream, |request, _| {
+                assert_eq!(request.headers()["user-agent"], expected);
+                assert_eq!(request.headers()["originator"], name);
+                assert_eq!(request.headers()["version"], "0.157.0");
+            })
+            .await;
+            ws.next().await.unwrap().unwrap();
+            ws.send(Message::Text(
+                completed_websocket_response("resp_cli_entry", 1, 1).into(),
+            ))
+            .await
+            .unwrap();
+        });
+        let state =
+            provider_openai::transport::profile::CodexWireProfileState::new(Default::default());
+        let profile = ClientProfileSelection {
+            client: ClientKind::Cli,
+            platform: ClientPlatform::Linux,
+            cli_entry: Some(entry),
+            os_type: Some("Alpine Linux".into()),
+            os_version: Some("3.24.1".into()),
+            version_mode: VersionMode::Fixed,
+            codex_version: Some("0.157.0".into()),
+            ..Default::default()
+        }
+        .resolve(&state)
+        .unwrap();
+        let client = CodexBackendClient::new(
+            reqwest::Client::builder().no_proxy().build().unwrap(),
+            format!("http://{address}"),
+            state,
+        )
+        .with_request_profile(profile);
+        let mut request = codex_request("gpt-test", "", Vec::new());
+        request.force_http_sse = true;
+        client
+            .create_response(
+                &request,
+                request_context("req_cli_http", Some("acct-fixture")),
+            )
+            .await
+            .unwrap();
+        request.force_http_sse = false;
+        request.use_websocket = true;
+        client
+            .create_response(
+                &request,
+                request_context("req_cli_ws", Some("acct-fixture")),
+            )
+            .await
+            .unwrap();
+        server.await.unwrap();
+    }
+}

@@ -25,7 +25,6 @@ pub mod desktop_artifact;
 pub mod identity;
 pub mod platform_release;
 pub mod selection;
-pub mod ua_catalog;
 
 use selection::{ClientKind, ClientPlatform, ClientRelease};
 
@@ -52,7 +51,7 @@ pub use gateway_core::account::RequestLocation as CodexRequestLocation;
 
 /// Codex 上游请求身份快照。
 ///
-/// 预设按配套版本生成 UA；发布目录和自定义身份保留完整 UA 及其配套请求头。
+/// 预设按官方配套版本生成 UA；自定义身份保留完整 UA 及其配套请求头。
 /// 官方制品核验只更新独立的基线与预设资料，不改写已冻结的请求身份。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodexWireProfile {
@@ -73,7 +72,7 @@ pub struct CodexWireProfile {
     pub arch: String,
     /// Codex Core UA 中的终端标记。
     pub terminal: String,
-    /// 发布目录或自定义的完整值；存在时不得用预设字段重新拼接。
+    /// 入口专属或自定义的完整值；存在时不得用默认预设重新拼接。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exact_user_agent: Option<String>,
     /// 未配置时不发送 residency 头；不随制品版本更新而改变。
@@ -103,7 +102,7 @@ impl Default for CodexWireProfile {
 }
 
 impl CodexWireProfile {
-    /// 原样返回完整 UA；仅旧预设按 bundled Core app-server 格式生成。
+    /// 原样返回已解析的完整 UA；默认预设按 bundled Core app-server 格式生成。
     pub fn user_agent(&self) -> String {
         if let Some(user_agent) = &self.exact_user_agent {
             return user_agent.clone();
@@ -151,7 +150,6 @@ impl CodexWireProfile {
 pub struct CodexWireProfileState {
     profile: Arc<RwLock<CodexWireProfile>>,
     releases: Arc<RwLock<ClientReleases>>,
-    catalog: ua_catalog::UaCatalogState,
 }
 
 type ClientReleases = BTreeMap<(ClientKind, ClientPlatform, String), ClientReleaseObservation>;
@@ -169,15 +167,10 @@ impl CodexWireProfileState {
         let state = Self {
             profile: Arc::new(RwLock::new(profile)),
             releases: Arc::default(),
-            catalog: ua_catalog::UaCatalogState::default(),
         };
         cli_release::seed_releases(&state);
         platform_release::seed_releases(&state);
         state
-    }
-
-    pub fn catalog(&self) -> &ua_catalog::UaCatalogState {
-        &self.catalog
     }
 
     /// 返回当前画像的独立快照，避免持锁执行网络请求。

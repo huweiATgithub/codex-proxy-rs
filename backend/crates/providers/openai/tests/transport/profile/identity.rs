@@ -12,37 +12,30 @@ fn document(value: Value) -> OpaqueProviderData {
 }
 
 #[test]
-fn catalog_entries_send_exact_user_agent_and_matching_companion_headers() {
+fn complete_custom_identities_send_exact_user_agent_and_matching_companion_headers() {
     let state = CodexWireProfileState::new(CodexWireProfile {
         residency: Some(CodexResidency::Us),
         ..Default::default()
     });
-    for (client, release, core, originator, user_agent) in [
+    for (core, originator, user_agent) in [
         (
-            "desktop",
-            "26.917.62051",
             "0.155.0-alpha.16.3",
             "Codex Desktop",
             "Codex Desktop/0.155.0-alpha.16.3 (Ubuntu 24.4.0; x86_64) unknown (Codex Desktop; 26.917.62051)",
         ),
         (
-            "cli",
-            "0.156.1",
             "0.156.1",
             "codex-tui",
             "codex-tui/0.156.1 (Ubuntu 24.4.0; x86_64) xterm-256color (codex-tui; 0.156.1)",
         ),
         (
-            "exec",
-            "0.156.1",
             "0.156.1",
             "codex_exec",
             "codex_exec/0.156.1 (Ubuntu 24.4.0; x86_64) xterm-256color (codex_exec; 0.156.1)",
         ),
     ] {
         let selection = document(json!({
-            "mode":"catalog", "versionMode":"fixed",
-            "entry":{"client":client,"environment":"linux-ubuntu-x64","release":release,"userAgent":user_agent}
+            "mode":"custom", "userAgent":user_agent
         }));
         let profile = RequestProfileSelection::parse(&selection)
             .unwrap()
@@ -120,27 +113,6 @@ fn raw_identity_rejects_injection_conflicting_headers_and_unknown_modes() {
             RequestProfileSelection::parse(&document(configuration.clone())).is_err(),
             "{configuration}"
         );
-    }
-}
-
-#[test]
-fn catalog_selection_rejects_mismatched_client_environment_and_release() {
-    let baseline = json!({"mode":"catalog","versionMode":"fixed","entry":{
-        "client":"cli","environment":"linux-ubuntu-x64","release":"0.156.1",
-        "userAgent":"codex-tui/0.156.1 (Ubuntu 24.4.0; x86_64) xterm-256color (codex-tui; 0.156.1)"
-    }});
-    for patch in [
-        json!({"client":"exec"}),
-        json!({"environment":"linux-debian-x64"}),
-        json!({"environment":"linux-ubuntu-arm64"}),
-        json!({"release":"0.157.0"}),
-    ] {
-        let mut configuration = baseline.clone();
-        configuration["entry"]
-            .as_object_mut()
-            .unwrap()
-            .extend(patch.as_object().unwrap().clone());
-        assert!(RequestProfileSelection::parse(&document(configuration)).is_err());
     }
 }
 

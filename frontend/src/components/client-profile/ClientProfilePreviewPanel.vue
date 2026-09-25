@@ -72,13 +72,13 @@ withDefaults(defineProps<{
         {{ policy }}
       </p>
       <p v-else class="m-0 text-cp-xs text-cp-text-tertiary">
-        {{ preview.versionSource === 'custom' ? '自定义版本' : preview.versionSource === 'catalog' ? '发布列表' : '自动更新' }}
+        {{ preview.versionSource === 'custom' ? '固定身份' : '官方版本自动更新' }}
         <template v-if="preview.versionSource === 'official'">
           · {{ preview.checkedAt ? `检查于 ${formatDateTime(preview.checkedAt)}` : '待检查' }}
         </template>
       </p>
       <p v-if="preview.error && preview.versionSource !== 'custom'" :title="preview.error" class="m-0 text-cp-sm text-cp-warning">
-        更新失败 · {{ preview.versionSource === 'catalog' ? '沿用上次条目' : '沿用上次版本' }}
+        更新失败 · 沿用上次版本
       </p>
     </template>
   </div>

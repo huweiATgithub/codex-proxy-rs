@@ -14,6 +14,23 @@ pub enum ClientKind {
     Cli,
 }
 
+/// CLI 共用官方发布版本，但不同入口提供各自的客户端标识和 UA 后缀。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CliEntry {
+    Tui,
+    Exec,
+}
+
+impl CliEntry {
+    pub const fn originator(self) -> &'static str {
+        match self {
+            Self::Tui => "codex-tui",
+            Self::Exec => "codex_exec",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClientPlatform {
@@ -61,7 +78,9 @@ pub struct ClientProfileSelection {
     pub client: ClientKind,
     pub platform: ClientPlatform,
     pub version_mode: VersionMode,
+    pub cli_entry: Option<CliEntry>,
     pub originator: Option<String>,
+    pub os_type: Option<String>,
     pub os_version: Option<String>,
     pub arch: Option<String>,
     pub terminal: Option<String>,
@@ -76,7 +95,9 @@ impl Default for ClientProfileSelection {
             client: ClientKind::Desktop,
             platform: ClientPlatform::Macos,
             version_mode: VersionMode::Latest,
+            cli_entry: None,
             originator: None,
+            os_type: None,
             os_version: None,
             arch: None,
             terminal: None,
@@ -104,9 +125,20 @@ impl ClientProfileSelection {
         self.arch.as_deref().unwrap_or(self.platform.default_arch())
     }
 
+    fn default_originator(&self) -> &'static str {
+        match self.client {
+            ClientKind::Desktop => "Codex Desktop",
+            ClientKind::Cli => self.cli_entry.map_or("codex_cli_rs", CliEntry::originator),
+        }
+    }
+
     pub(super) fn validate(&self) -> Result<(), ClientProfileError> {
+        if self.client == ClientKind::Desktop && self.cli_entry.is_some() {
+            return Err(ClientProfileError::Invalid);
+        }
         for value in [
             self.originator.as_deref(),
+            self.os_type.as_deref(),
             self.os_version.as_deref(),
             self.arch.as_deref(),
             self.terminal.as_deref(),
@@ -185,19 +217,19 @@ impl ClientProfileSelection {
                 verified_at: None,
             },
         };
-        Ok(CodexWireProfile {
+        let mut profile = CodexWireProfile {
             client_kind: self.client,
             originator: self
                 .originator
                 .clone()
-                .unwrap_or_else(|| match self.client {
-                    ClientKind::Desktop => "Codex Desktop".to_owned(),
-                    ClientKind::Cli => "codex_cli_rs".to_owned(),
-                }),
+                .unwrap_or_else(|| self.default_originator().to_owned()),
             codex_version: release.codex_version,
             desktop_version: release.desktop_version.unwrap_or_default(),
             desktop_build: release.desktop_build.unwrap_or_default(),
-            os_type: self.platform.os_type().to_owned(),
+            os_type: self
+                .os_type
+                .clone()
+                .unwrap_or_else(|| self.platform.os_type().to_owned()),
             os_version: self
                 .os_version
                 .clone()
@@ -210,7 +242,18 @@ impl ClientProfileSelection {
             exact_user_agent: None,
             residency: state.snapshot().residency,
             verified_at: release.verified_at.unwrap_or(DateTime::UNIX_EPOCH),
-        })
+        };
+        if let Some(entry) = self.cli_entry {
+            // 入口后缀使用同一次解析得到的 Core 版本，避免每日更新后头部与后缀混用。
+            // originator 可单独覆盖；入口名与官方 clientInfo.name 的语义保持一致。
+            profile.exact_user_agent = Some(format!(
+                "{} ({}; {})",
+                profile.user_agent(),
+                entry.originator(),
+                profile.codex_version,
+            ));
+        }
+        Ok(profile)
     }
 }
 
@@ -232,7 +275,7 @@ impl CodexWireProfileState {
         super::identity::RequestProfileSelection::parse(configuration)?.preview(self)
     }
 
-    pub(super) fn preview_legacy_selection(
+    pub(super) fn preview_preset_selection(
         &self,
         selection: &ClientProfileSelection,
     ) -> Result<OpaqueProviderData, ClientProfileError> {
@@ -278,11 +321,11 @@ impl CodexWireProfileState {
                     "configuration": configuration,
                     "automaticAvailable": available,
                     "reason": (!available).then_some("暂不支持自动更新"),
-                    "defaults": { "originator": if client == ClientKind::Desktop { "Codex Desktop" } else { "codex_cli_rs" }, "osVersion": platform.default_os_version(), "arch": platform.default_arch(), "terminal": "unknown" },
+                    "defaults": { "originator": configuration.default_originator(), "osType": platform.os_type(), "osVersion": platform.default_os_version(), "arch": platform.default_arch(), "terminal": "unknown" },
                 }));
             }
         }
-        object(&json!({ "presets": presets, "catalog": self.catalog().snapshot() }))
+        object(&json!({ "presets": presets }))
     }
 }
 

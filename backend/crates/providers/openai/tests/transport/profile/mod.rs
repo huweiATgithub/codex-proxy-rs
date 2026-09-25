@@ -20,7 +20,6 @@ mod desktop_artifact;
 mod identity;
 mod platform_release;
 mod selection;
-mod ua_catalog;
 
 struct ReleaseTransport {
     releases: Mutex<VecDeque<Result<CodexDesktopRelease, CodexDesktopReleaseError>>>,
