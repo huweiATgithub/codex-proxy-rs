@@ -24,7 +24,7 @@ fn oauth_pending_binding_debug_redacts_raw_value() {
 fn provider_session_affinity_key_debug_is_opaque() {
     let key = ProviderSessionAffinityKey::try_new("opaque-session-key").expect("valid key");
 
-    assert_eq!(format!("{key:?}"), "ProviderSessionAffinityKey([OPAQUE])");
+    assert_eq!(format!("{key:?}"), "SessionAffinityKey([OPAQUE])");
 }
 
 #[test]

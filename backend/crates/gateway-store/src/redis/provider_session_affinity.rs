@@ -1,37 +1,33 @@
-//! Provider 会话亲和性的可丢失 Redis 映射
+//! 当前会话账号绑定的 Redis 原子存储
 
 use std::time::Duration;
 
 use gateway_core::account::ProviderAccountId;
-use gateway_core::provider_ports::{
-    ProviderSessionAffinityKey, ProviderSessionAffinityPort, ProviderStoreError,
-    ProviderStoreErrorKind,
+use gateway_core::account::affinity::{
+    ACCOUNT_BINDING_TTL, AccountBinding, AffinityStore, AffinityStoreError, AffinityStoreErrorKind,
+    AffinityUpdate, BindingToken, SessionAffinityKey,
 };
 use gateway_core::routing::ProviderKind;
 use redis::aio::ConnectionManager;
+use serde::{Deserialize, Serialize};
 
 use crate::StoreResult;
 
 use super::{namespace, resource_fingerprint};
 
-const MAX_SESSION_AFFINITY_TTL: Duration = Duration::from_secs(24 * 60 * 60);
-
-const CLAIM_OR_LOAD_SCRIPT: &str = r#"
-local current = redis.call('GET', KEYS[1])
-if current then
-  return current
+// Rust 先解析完整记录，Lua 只比较已解析观察的原文，避免覆盖有损或未知字段
+const COMPARE_AND_SET_SCRIPT: &str = r#"
+local current = redis.pcall('GET', KEYS[1])
+if type(current) == 'table' and current.err then
+  return {2, false}
 end
-redis.call('PSETEX', KEYS[1], tonumber(ARGV[2]), ARGV[1])
-return ARGV[1]
-"#;
-
-const COMPARE_AND_BIND_SCRIPT: &str = r#"
-local current = redis.call('GET', KEYS[1])
-if not current or current == ARGV[1] then
-  redis.call('PSETEX', KEYS[1], tonumber(ARGV[3]), ARGV[2])
-  return ARGV[2]
+local matches = (ARGV[1] == 'absent' and not current)
+  or (ARGV[1] == 'bound' and current == ARGV[2])
+if not matches then
+  return {0, current}
 end
-return current
+redis.call('PSETEX', KEYS[1], tonumber(ARGV[4]), ARGV[3])
+return {1, ARGV[3]}
 "#;
 
 #[derive(Clone)]
@@ -51,142 +47,144 @@ impl RedisProviderSessionAffinityRepository {
     fn key(
         &self,
         provider_kind: &ProviderKind,
-        affinity_key: &ProviderSessionAffinityKey,
-    ) -> Result<String, ProviderStoreError> {
+        affinity_key: &SessionAffinityKey,
+    ) -> Result<String, AffinityStoreError> {
         let scope = format!(
             "{}\0{}",
             provider_kind.as_str(),
             affinity_key.expose_to_store()
         );
         let fingerprint = resource_fingerprint("provider session affinity", &scope)
-            .map_err(|_| provider_invalid("encode provider session affinity key"))?;
+            .map_err(|_| invalid("encode key"))?;
         Ok(format!(
-            "{}:scheduler:affinity:{{{fingerprint}}}",
+            "{}:scheduler:account-binding:{{{fingerprint}}}",
             self.namespace
         ))
     }
+
+    async fn read(&self, key: &str) -> Result<Option<StoredBinding>, AffinityStoreError> {
+        let mut connection = self.connection.clone();
+        redis::cmd("GET")
+            .arg(key)
+            .query_async::<Option<String>>(&mut connection)
+            .await
+            .map_err(|error| {
+                if error.code() == Some("WRONGTYPE")
+                    || error.kind() == redis::ErrorKind::UnexpectedReturnType
+                {
+                    invalid("load")
+                } else {
+                    unavailable("load")
+                }
+            })?
+            .map(StoredBinding::parse)
+            .transpose()
+    }
 }
 
-impl ProviderSessionAffinityPort for RedisProviderSessionAffinityRepository {
+impl AffinityStore for RedisProviderSessionAffinityRepository {
     fn load<'a>(
         &'a self,
         provider_kind: &'a ProviderKind,
-        key: &'a ProviderSessionAffinityKey,
-    ) -> futures::future::BoxFuture<'a, Result<Option<ProviderAccountId>, ProviderStoreError>> {
+        key: &'a SessionAffinityKey,
+    ) -> futures::future::BoxFuture<'a, Result<Option<AccountBinding>, AffinityStoreError>> {
         Box::pin(async move {
-            let mut connection = self.connection.clone();
-            let account_id = redis::cmd("GET")
-                .arg(self.key(provider_kind, key)?)
-                .query_async::<Option<String>>(&mut connection)
+            self.read(&self.key(provider_kind, key)?)
                 .await
-                .map_err(|_| provider_unavailable("load provider session affinity"))?;
-            account_id
-                .map(|account_id| {
-                    ProviderAccountId::new(account_id)
-                        .map_err(|_| provider_invalid("decode provider session affinity"))
-                })
-                .transpose()
+                .map(|stored| stored.map(|stored| stored.binding))
         })
     }
 
-    fn bind<'a>(
+    fn compare_and_set<'a>(
         &'a self,
         provider_kind: &'a ProviderKind,
-        key: &'a ProviderSessionAffinityKey,
-        account_id: &'a ProviderAccountId,
+        key: &'a SessionAffinityKey,
+        expected: Option<&'a AccountBinding>,
+        selected_account: &'a ProviderAccountId,
         ttl: Duration,
-    ) -> futures::future::BoxFuture<'a, Result<(), ProviderStoreError>> {
+    ) -> futures::future::BoxFuture<'a, Result<AffinityUpdate, AffinityStoreError>> {
         Box::pin(async move {
-            let ttl_millis = session_affinity_ttl_millis(ttl)?;
+            let ttl_millis = binding_ttl_millis(ttl)?;
+            let key = self.key(provider_kind, key)?;
+            let current = self.read(&key).await?;
+            if current.as_ref().map(|stored| &stored.binding) != expected {
+                return Ok(AffinityUpdate::Conflict(
+                    current.map(|stored| stored.binding),
+                ));
+            }
+
+            let token = match expected {
+                Some(binding) if binding.account_id() == selected_account => {
+                    binding.token().clone()
+                }
+                _ => BindingToken::try_new(uuid::Uuid::new_v4().simple().to_string())
+                    .map_err(|_| invalid("generate token"))?,
+            };
+            let selected = AccountBinding::new(selected_account.clone(), token);
+            let wire = WireBinding {
+                account_id: selected.account_id().as_str().to_owned(),
+                token: selected.token().expose_to_store().to_owned(),
+            };
+            let encoded = serde_json::to_string(&wire).map_err(|_| invalid("encode binding"))?;
             let mut connection = self.connection.clone();
-            redis::cmd("PSETEX")
-                .arg(self.key(provider_kind, key)?)
+            let (status, value) = redis::Script::new(COMPARE_AND_SET_SCRIPT)
+                .key(key)
+                .arg(if current.is_some() { "bound" } else { "absent" })
+                .arg(current.as_ref().map_or("", |stored| stored.raw.as_str()))
+                .arg(encoded)
                 .arg(ttl_millis)
-                .arg(account_id.as_str())
-                .query_async::<()>(&mut connection)
+                .invoke_async::<(u8, Option<String>)>(&mut connection)
                 .await
-                .map_err(|_| provider_unavailable("bind provider session affinity"))
-        })
-    }
-
-    fn claim_or_load<'a>(
-        &'a self,
-        provider_kind: &'a ProviderKind,
-        key: &'a ProviderSessionAffinityKey,
-        candidate_account_id: &'a ProviderAccountId,
-        ttl: Duration,
-    ) -> futures::future::BoxFuture<'a, Result<ProviderAccountId, ProviderStoreError>> {
-        Box::pin(async move {
-            let ttl_millis = session_affinity_ttl_millis(ttl)?;
-            let mut connection = self.connection.clone();
-            let effective_account_id = redis::Script::new(CLAIM_OR_LOAD_SCRIPT)
-                .key(self.key(provider_kind, key)?)
-                .arg(candidate_account_id.as_str())
-                .arg(ttl_millis)
-                .invoke_async::<String>(&mut connection)
-                .await
-                .map_err(|_| provider_unavailable("claim provider session affinity"))?;
-            decode_account_id(effective_account_id)
-        })
-    }
-
-    fn compare_and_bind<'a>(
-        &'a self,
-        provider_kind: &'a ProviderKind,
-        key: &'a ProviderSessionAffinityKey,
-        expected_account_id: &'a ProviderAccountId,
-        replacement_account_id: &'a ProviderAccountId,
-        ttl: Duration,
-    ) -> futures::future::BoxFuture<'a, Result<ProviderAccountId, ProviderStoreError>> {
-        Box::pin(async move {
-            let ttl_millis = session_affinity_ttl_millis(ttl)?;
-            let mut connection = self.connection.clone();
-            let effective_account_id = redis::Script::new(COMPARE_AND_BIND_SCRIPT)
-                .key(self.key(provider_kind, key)?)
-                .arg(expected_account_id.as_str())
-                .arg(replacement_account_id.as_str())
-                .arg(ttl_millis)
-                .invoke_async::<String>(&mut connection)
-                .await
-                .map_err(|_| provider_unavailable("compare provider session affinity"))?;
-            decode_account_id(effective_account_id)
-        })
-    }
-
-    fn clear<'a>(
-        &'a self,
-        provider_kind: &'a ProviderKind,
-        key: &'a ProviderSessionAffinityKey,
-    ) -> futures::future::BoxFuture<'a, Result<bool, ProviderStoreError>> {
-        Box::pin(async move {
-            let mut connection = self.connection.clone();
-            redis::cmd("DEL")
-                .arg(self.key(provider_kind, key)?)
-                .query_async::<u64>(&mut connection)
-                .await
-                .map(|removed| removed > 0)
-                .map_err(|_| provider_unavailable("clear provider session affinity"))
+                .map_err(|_| unavailable("compare and set"))?;
+            match status {
+                1 => Ok(AffinityUpdate::Applied(selected)),
+                0 => value
+                    .map(StoredBinding::parse)
+                    .transpose()
+                    .map(|stored| AffinityUpdate::Conflict(stored.map(|stored| stored.binding))),
+                _ => Err(invalid("compare and set")),
+            }
         })
     }
 }
 
-fn session_affinity_ttl_millis(ttl: Duration) -> Result<u64, ProviderStoreError> {
-    if ttl.is_zero() || ttl > MAX_SESSION_AFFINITY_TTL {
-        return Err(provider_invalid("validate provider session affinity TTL"));
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WireBinding {
+    account_id: String,
+    token: String,
+}
+
+struct StoredBinding {
+    raw: String,
+    binding: AccountBinding,
+}
+
+impl StoredBinding {
+    fn parse(raw: String) -> Result<Self, AffinityStoreError> {
+        let wire: WireBinding =
+            serde_json::from_str(&raw).map_err(|_| invalid("decode binding"))?;
+        let account_id =
+            ProviderAccountId::new(wire.account_id).map_err(|_| invalid("decode binding"))?;
+        let token = BindingToken::try_new(wire.token).map_err(|_| invalid("decode binding"))?;
+        Ok(Self {
+            raw,
+            binding: AccountBinding::new(account_id, token),
+        })
     }
-    u64::try_from(ttl.as_millis())
-        .map_err(|_| provider_invalid("validate provider session affinity TTL"))
 }
 
-fn decode_account_id(account_id: String) -> Result<ProviderAccountId, ProviderStoreError> {
-    ProviderAccountId::new(account_id)
-        .map_err(|_| provider_invalid("decode provider session affinity"))
+fn binding_ttl_millis(ttl: Duration) -> Result<u64, AffinityStoreError> {
+    if ttl.as_millis() == 0 || ttl > ACCOUNT_BINDING_TTL {
+        return Err(invalid("validate TTL"));
+    }
+    u64::try_from(ttl.as_millis()).map_err(|_| invalid("validate TTL"))
 }
 
-fn provider_unavailable(operation: &'static str) -> ProviderStoreError {
-    ProviderStoreError::new(ProviderStoreErrorKind::Unavailable, operation)
+fn unavailable(operation: &'static str) -> AffinityStoreError {
+    AffinityStoreError::new(AffinityStoreErrorKind::Unavailable, operation)
 }
 
-fn provider_invalid(operation: &'static str) -> ProviderStoreError {
-    ProviderStoreError::new(ProviderStoreErrorKind::InvalidData, operation)
+fn invalid(operation: &'static str) -> AffinityStoreError {
+    AffinityStoreError::new(AffinityStoreErrorKind::InvalidData, operation)
 }

@@ -224,11 +224,20 @@ impl<K: Eq + Hash> WaitTicket<K> {
 
     pub async fn retry(&self) -> Result<(), QueueRejection> {
         // 租约释放可能经过后台队列；有界重查同时覆盖释放通知之前及 TTL 到期的空位
+        self.recheck().await?;
+        self.turn().await
+    }
+
+    async fn recheck(&self) -> Result<(), QueueRejection> {
         Delay::new(
             CAPACITY_RECHECK_INTERVAL.min(self.deadline.saturating_duration_since(Instant::now())),
         )
         .await;
-        self.turn().await
+        if Instant::now() >= self.deadline {
+            Err(QueueRejection::Timeout)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -269,6 +278,7 @@ pub struct CapacityWait<'a, K: Eq + Hash> {
     request_deadline: Option<SystemTime>,
     budget: &'a ConcurrencyWaitBudget,
     priority: WaitPriority,
+    periodic_recheck: bool,
     started_at: Option<Instant>,
     ticket: Option<WaitTicket<K>>,
 }
@@ -287,6 +297,7 @@ impl<'a, K: Clone + Eq + Hash> CapacityWait<'a, K> {
             request_deadline: request_deadline.into(),
             budget,
             priority: WaitPriority::Normal,
+            periodic_recheck: false,
             started_at: None,
             ticket: None,
         }
@@ -295,6 +306,13 @@ impl<'a, K: Clone + Eq + Hash> CapacityWait<'a, K> {
     #[must_use]
     pub const fn with_priority(mut self, priority: WaitPriority) -> Self {
         self.priority = priority;
+        self
+    }
+
+    /// 允许非队首请求定期重查等待目标；实际选号仍须通过 `can_try` 的顺序检查
+    #[must_use]
+    pub const fn with_periodic_recheck(mut self) -> Self {
+        self.periodic_recheck = true;
         self
     }
 
@@ -346,7 +364,11 @@ impl<'a, K: Clone + Eq + Hash> CapacityWait<'a, K> {
             )?);
         }
         if let Some(ticket) = &self.ticket {
-            ticket.retry().await?;
+            if self.periodic_recheck {
+                ticket.recheck().await?;
+            } else {
+                ticket.retry().await?;
+            }
         }
         Ok(())
     }

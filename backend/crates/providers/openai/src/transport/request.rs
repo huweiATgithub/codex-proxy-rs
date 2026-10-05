@@ -729,6 +729,8 @@ fn apply_protocol_context(request: &mut CodexResponsesRequest, context: &Map<Str
         .or_else(|| request.client_conversation_id.take())
         .or(prompt_cache_key);
     request.client_session_id = gateway_protocol::openai::codex_session_id(request.body(), context);
+    request.client_logical_session_id =
+        gateway_protocol::openai::codex_account_session_id(request.body(), context, "session_id");
     request.client_thread_id = gateway_protocol::openai::codex_thread_id(request.body(), context);
     request.client_request_id =
         context_string(context, "client_request_id").or_else(|| request.client_request_id.take());

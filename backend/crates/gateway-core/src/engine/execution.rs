@@ -13,6 +13,7 @@ use futures::{FutureExt, future::BoxFuture, pin_mut, select_biased};
 use futures_timer::Delay;
 use uuid::Uuid;
 
+use crate::account::affinity::AffinityStoreErrorKind;
 use crate::concurrency::{CapacityWait, ConcurrencyWaitBudget, ConcurrencyWaitQueue};
 use crate::engine::admission::{
     ClientAdmissionDecision, ClientAdmissionPort, ClientAdmissionRejection, ClientAdmissionRequest,
@@ -60,7 +61,7 @@ use crate::identity::ProviderKind;
 use crate::lifecycle::{CancellationToken, Deadline, LeaseGuard, REQUEST_LEASE_TTL};
 use crate::operation::{Operation, ProviderSessionState};
 use crate::policy::{ClientApiKeyId, ClientPolicy};
-use crate::provider_ports::{ProviderSessionAffinityPort, ProviderStoreErrorKind};
+use crate::provider_ports::ProviderSessionAffinityPort;
 use crate::routing::{
     FrozenAccountScope, ProviderCatalogUnavailable, PublicModelDescriptor, PublicModelId,
     RoutingContext, RuntimeSnapshot, UpstreamModelId,
@@ -1827,11 +1828,11 @@ impl DefaultExecutionService {
             pin_mut!(load, timeout);
             select_biased! {
                 result = load => result.map_err(|error| match error.kind() {
-                    ProviderStoreErrorKind::Unavailable => GatewayError::new(
+                    AffinityStoreErrorKind::Unavailable => GatewayError::new(
                         GatewayErrorKind::ProviderInfrastructureUnavailable,
                         "provider session affinity is temporarily unavailable",
                     ),
-                    ProviderStoreErrorKind::InvalidData | ProviderStoreErrorKind::Conflict => {
+                    AffinityStoreErrorKind::InvalidData => {
                         GatewayError::new(GatewayErrorKind::Internal, "provider session affinity is invalid")
                     }
                 })?,
@@ -1841,9 +1842,10 @@ impl DefaultExecutionService {
                 )),
             }
         };
-        let Some(account) = account else {
+        let Some(binding) = account else {
             return Ok(None);
         };
+        let account = binding.account_id().clone();
         if !parent.account_scope.allows(&account)
             || parent.account_scope.account_provider(&account) != Some(&provider)
         {

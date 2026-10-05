@@ -48,6 +48,7 @@ pub struct ProviderCallMetadata {
     upstream_request_id: Option<OpaqueUpstreamValue>,
     transport: UpstreamTransport,
     selection_observation: Option<ProviderSelectionObservation>,
+    session_account_binding: bool,
 }
 
 /// Provider 账号选择阶段输出的中立运行压力事实
@@ -96,6 +97,7 @@ impl ProviderCallMetadata {
             upstream_request_id: None,
             transport,
             selection_observation: None,
+            session_account_binding: false,
         }
     }
 
@@ -113,6 +115,7 @@ impl ProviderCallMetadata {
             upstream_request_id: None,
             transport,
             selection_observation: None,
+            session_account_binding: false,
         }
     }
 
@@ -166,6 +169,18 @@ impl ProviderCallMetadata {
     #[must_use]
     pub const fn selection_observation(&self) -> Option<ProviderSelectionObservation> {
         self.selection_observation
+    }
+
+    /// 标记本次账号已经过会话绑定裁决；后续重试须重新解析当前绑定
+    #[must_use]
+    pub const fn with_session_account_binding(mut self) -> Self {
+        self.session_account_binding = true;
+        self
+    }
+
+    #[must_use]
+    pub const fn uses_session_account_binding(&self) -> bool {
+        self.session_account_binding
     }
 
     /// 确认 metadata 没有替换请求计划中冻结的 Provider 候选

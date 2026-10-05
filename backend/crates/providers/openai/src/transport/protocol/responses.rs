@@ -39,8 +39,10 @@ pub struct CodexResponsesRequest {
     pub explicit_prompt_cache_key: bool,
     /// 客户端会话 ID
     pub client_conversation_id: Option<String>,
-    /// 客户端 session ID，仅保留在受控本地上下文
+    /// 客户端上游会话头的缓存路由身份，仅保留在受控本地上下文
     pub client_session_id: Option<String>,
+    /// 客户端根线程与后代共享的逻辑会话身份，仅用于账号绑定
+    pub client_logical_session_id: Option<String>,
     /// 客户端 thread ID，仅保留在受控本地上下文
     pub client_thread_id: Option<String>,
     /// 客户端 request ID，仅保留在受控本地上下文
@@ -511,6 +513,7 @@ impl CodexResponsesRequest {
             explicit_prompt_cache_key: false,
             client_conversation_id: None,
             client_session_id: None,
+            client_logical_session_id: None,
             client_thread_id: None,
             client_request_id: None,
             client_turn_id: None,

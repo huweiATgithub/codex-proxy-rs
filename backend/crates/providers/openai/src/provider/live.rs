@@ -31,6 +31,7 @@ use uuid::Uuid;
 
 use super::*;
 
+use crate::credential::derive_codex_live_session_affinity;
 use crate::credential::{
     CODEX_AUTHENTICATION_KIND_OAUTH, CodexCredentialRepository,
     SelectCodexProviderEndpointCredential,
@@ -219,6 +220,12 @@ impl Drop for LiveCallClaim {
 
 impl gateway_core::live::LiveRelayGuard for LiveCallClaim {}
 
+struct SelectedLiveCall {
+    lease: CodexCredentialLease,
+    session_affinity: Option<CodexSessionAffinity>,
+    account_selection_wait_ms: u64,
+}
+
 impl CodexProvider {
     /// 引擎 arm：把受限的 realtime calls Provider HTTP 操作发往 Codex backend。
     ///
@@ -243,20 +250,22 @@ impl CodexProvider {
                 UpstreamSendState::NotSent,
             )
         })?;
+        let session_affinity =
+            derive_codex_live_session_affinity(&request, &[], context.client_api_key_ref());
         let selection_started_at = Instant::now();
         let lease = self
             .selector
             .select_for_provider_endpoint(&SelectCodexProviderEndpointCredential {
                 request_url: &self.live_calls_url,
                 attempt: &context,
-                session_affinity: None,
+                session_affinity: session_affinity.as_ref(),
                 upstream_model: Some(upstream_model.as_str()),
                 // realtime calls 端点绑定 ChatGPT OAuth 身份；在候选阶段就排除
                 // API Key 账号，避免混合账号池选中不支持语音的账号后必然失败。
                 requires_oauth: true,
             })
             .await
-            .map_err(map_selection_error)?;
+            .map_err(|error| map_session_selection_error(error, session_affinity.is_some()))?;
         if lease.authentication().oauth().is_none() {
             // 诊断等旁路仍可能到达非 OAuth 租约；此处兜底拒绝。
             return Err(provider_error(
@@ -266,11 +275,15 @@ impl CodexProvider {
         }
         let account_selection_wait_ms =
             u64::try_from(selection_started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let lease = Arc::new(lease);
         let operation = Operation::ProviderHttp(request);
         let provider_kind = ProviderKind::new(PROVIDER_NAME)
             .map_err(|_| provider_error(ProviderErrorKind::Protocol, UpstreamSendState::NotSent))?;
         let account_id = lease.account_id().clone();
+        let selected = SelectedLiveCall {
+            lease,
+            session_affinity,
+            account_selection_wait_ms,
+        };
         let provider = Arc::clone(&self);
         let terminal_context = context.clone();
         context
@@ -287,8 +300,7 @@ impl CodexProvider {
                                 operation,
                                 upstream_model,
                                 middleware_headers,
-                                lease,
-                                account_selection_wait_ms,
+                                selected,
                             )
                             .await
                     })
@@ -303,8 +315,7 @@ impl CodexProvider {
         operation: Operation,
         upstream_model: UpstreamModelId,
         middleware_headers: Vec<MiddlewareHeader>,
-        lease: Arc<CodexCredentialLease>,
-        account_selection_wait_ms: u64,
+        selected: SelectedLiveCall,
     ) -> Result<ProviderStream, ProviderError> {
         let Operation::ProviderHttp(request) = operation else {
             return Err(provider_error(
@@ -312,6 +323,25 @@ impl CodexProvider {
                 UpstreamSendState::NotSent,
             ));
         };
+        let SelectedLiveCall {
+            mut lease,
+            session_affinity: original_affinity,
+            account_selection_wait_ms,
+        } = selected;
+        let session_affinity = derive_codex_live_session_affinity(
+            &request,
+            &middleware_headers,
+            context.client_api_key_ref(),
+        );
+        if original_affinity.as_ref().map(CodexSessionAffinity::key)
+            != session_affinity.as_ref().map(CodexSessionAffinity::key)
+        {
+            self.selector
+                .validate_translated_selection(&mut lease, session_affinity.as_ref(), None)
+                .await
+                .map_err(|error| map_session_selection_error(error, session_affinity.is_some()))?;
+        }
+        let lease = Arc::new(lease);
         let allows_account_state_mutation = lease.allows_account_state_mutation();
         let provider_kind = ProviderKind::new(PROVIDER_NAME)
             .map_err(|_| provider_error(ProviderErrorKind::Protocol, UpstreamSendState::NotSent))?;
@@ -327,6 +357,11 @@ impl CodexProvider {
             account_selection_wait_ms,
             lease.capacity_snapshot(),
         ));
+        let metadata = if session_affinity.is_some() && !context.is_diagnostic_required_account() {
+            metadata.with_session_account_binding()
+        } else {
+            metadata
+        };
         let content_type = request
             .headers()
             .iter()

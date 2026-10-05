@@ -1,4 +1,4 @@
-//! Live 引导模型事实与固定账号重连授权回归
+//! Live 引导模型事实、会话账号绑定与固定账号重连授权回归
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -6,29 +6,37 @@ use std::sync::Arc;
 use bytes::Bytes;
 use futures::{StreamExt, future::BoxFuture};
 use gateway_core::account::{
-    AccountModelAccess, AccountModelAccessMode, ProviderAccountId, ProviderAccountStore,
+    AccountModelAccess, AccountModelAccessMode, AccountWeight, ProviderAccountId,
+    ProviderAccountStore,
 };
 use gateway_core::engine::middleware::{
-    MiddlewareContext, MiddlewareError, MiddlewareNext, MiddlewarePlan, MiddlewareRequest,
-    MiddlewareResponse,
+    MiddlewareContext, MiddlewareError, MiddlewareHeader, MiddlewareNext, MiddlewarePlan,
+    MiddlewareRequest, MiddlewareResponse,
 };
 use gateway_core::engine::provider::{Provider, ProviderRequest};
 use gateway_core::lifecycle::CancellationToken;
 use gateway_core::live::{LiveGatewayErrorKind, LiveSidebandRequest, LiveSidebandStyle};
-use gateway_core::operation::{Operation, ProviderHttpMethod, ProviderHttpRequest, RawHttpPayload};
+use gateway_core::operation::{
+    GenerateRequest, Operation, ProtocolPayload, ProviderHttpHeader, ProviderHttpMethod,
+    ProviderHttpRequest, RawHttpPayload,
+};
 use gateway_core::policy::ClientApiKeyId;
 use gateway_core::routing::{
     ClientRoutingScope, ConfigRevision, FrozenAccountScope, ProviderKind, RoutingContext,
     RuntimeAccount, RuntimeAccountDirectory, RuntimeSnapshot, UpstreamModelId,
 };
-use serde_json::json;
+use gateway_core::upstream::UpstreamSendState;
+use serde_json::{Map, json};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{method, path},
+    matchers::{header, method, path},
 };
 
-use super::contract::{context, context_with_middleware, create_account, provider_with_base_url};
-use crate::support::MemoryAccountStore;
+use super::contract::{
+    context, context_with_middleware, create_account, planned_request,
+    provider_with_affinity_and_base_url, provider_with_base_url,
+};
+use crate::support::{MemoryAccountStore, MemorySessionAffinity};
 
 const MODEL: &str = "gpt-live-1-codex";
 const ACCOUNT: &str = "acct_provider_contract";
@@ -49,9 +57,7 @@ fn live_request() -> ProviderRequest {
     live_request_with_headers(Vec::new())
 }
 
-fn live_request_with_headers(
-    headers: Vec<gateway_core::operation::ProviderHttpHeader>,
-) -> ProviderRequest {
+fn live_request_with_headers(headers: Vec<ProviderHttpHeader>) -> ProviderRequest {
     let provider = ProviderKind::new("openai").unwrap();
     let model = UpstreamModelId::new(MODEL).unwrap();
     let operation = Operation::ProviderHttp(
@@ -86,6 +92,62 @@ fn live_request_with_headers(
         )
         .unwrap();
     ProviderRequest::new(operation, plan.candidates()[0].clone())
+}
+
+fn responses_session_request(session_id: &str) -> ProviderRequest {
+    planned_request(
+        "openai",
+        Operation::Generate(GenerateRequest::from_protocol_payload(
+            ProtocolPayload::json_object(
+                "openai",
+                json!({
+                    "model": "gpt-5.4",
+                    "input": "hello",
+                    "client_metadata": {"session_id": session_id}
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            )
+            .unwrap()
+            .with_context(Map::from_iter([("use_websocket".into(), json!(false))])),
+        )),
+    )
+}
+
+#[derive(Debug)]
+struct SessionRewriteMiddleware {
+    session_id: &'static str,
+    selected_account: &'static str,
+}
+
+impl MiddlewarePlan for SessionRewriteMiddleware {
+    fn handle(
+        &self,
+        context: MiddlewareContext,
+        request: MiddlewareRequest,
+        next: MiddlewareNext,
+    ) -> BoxFuture<'static, Result<MiddlewareResponse, MiddlewareError>> {
+        assert_eq!(
+            context.account_id().map(ProviderAccountId::as_str),
+            Some(self.selected_account)
+        );
+        let (protocol, mut headers, body) = request.into_parts();
+        headers.retain(|header| {
+            !header.name().eq_ignore_ascii_case("session-id")
+                && !header.name().eq_ignore_ascii_case("x-session-id")
+        });
+        headers.push(MiddlewareHeader::new(
+            "session-id",
+            Bytes::from_static(self.session_id.as_bytes()),
+        ));
+        // 中间件覆盖原协议头，多值头仍以首值确定会话归属
+        headers.push(MiddlewareHeader::new(
+            "session-id",
+            Bytes::from_static(b"live-original-session"),
+        ));
+        next.run(MiddlewareRequest::new(protocol, headers, body))
+    }
 }
 
 #[derive(Debug)]
@@ -146,6 +208,129 @@ async fn bootstrap() -> (Arc<dyn Provider>, Arc<MemoryAccountStore>, MockServer)
 async fn live_bootstrap_preserves_model_through_middleware_and_metadata() {
     let (_provider, _store, upstream) = bootstrap().await;
     upstream.verify().await;
+}
+
+#[tokio::test]
+async fn live_bootstrap_reuses_responses_session_binding_for_header_aliases() {
+    const SESSION: &str = "live-responses-shared-session";
+    let store = Arc::new(MemoryAccountStore::default());
+    create_account(&store, ACCOUNT).await;
+    let affinity = Arc::new(MemorySessionAffinity::default());
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/codex/responses"))
+        .and(header("chatgpt-account-id", format!("chatgpt-{ACCOUNT}")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(concat!(
+                    "event: response.completed\n",
+                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_live_affinity\",\"model\":\"gpt-5.4\",\"status\":\"completed\",\"output\":[]}}\n\n"
+                )),
+        )
+        .expect(1)
+        .mount(&upstream)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/codex/realtime/calls"))
+        .and(header("chatgpt-account-id", format!("chatgpt-{ACCOUNT}")))
+        .respond_with(
+            ResponseTemplate::new(201)
+                .insert_header("location", format!("/v1/live/{CALL}"))
+                .insert_header("content-type", "application/sdp")
+                .set_body_string("v=0\r\n"),
+        )
+        .expect(2)
+        .mount(&upstream)
+        .await;
+    let provider =
+        provider_with_affinity_and_base_url(&store, Arc::clone(&affinity), upstream.uri());
+    let mut responses = Arc::clone(&provider)
+        .execute(
+            responses_session_request(SESSION),
+            context("req_responses_before_live", CancellationToken::new()),
+        )
+        .await
+        .expect("Responses establishes the session owner");
+    assert_eq!(responses.metadata().provider_account_id().as_str(), ACCOUNT);
+    assert!(responses.metadata().uses_session_account_binding());
+    while let Some(event) = responses.next().await {
+        event.expect("Responses completes");
+    }
+    drop(responses);
+    create_account(&store, "acct_affinity_switch_b").await;
+    store.set_scheduling(
+        "acct_affinity_switch_b",
+        None,
+        AccountWeight::new(100).unwrap(),
+    );
+
+    for header_name in ["session-id", "x-session-id"] {
+        let mut live = Arc::clone(&provider)
+            .execute(
+                live_request_with_headers(vec![ProviderHttpHeader::new(
+                    header_name,
+                    Bytes::from_static(SESSION.as_bytes()),
+                )]),
+                context("req_live_shared_binding", CancellationToken::new()),
+            )
+            .await
+            .expect("Live reuses the Responses session owner");
+        assert_eq!(live.metadata().provider_account_id().as_str(), ACCOUNT);
+        assert!(live.metadata().uses_session_account_binding());
+        while let Some(event) = live.next().await {
+            event.expect("Live bootstrap completes on the bound account");
+        }
+    }
+    assert_eq!(affinity.binding_count(), 1);
+    upstream.verify().await;
+}
+
+#[tokio::test]
+async fn live_bootstrap_rejects_middleware_session_rewrite_to_different_owner() {
+    const ROOT_SESSION: &str = "live-rewrite-root";
+    const OTHER_ACCOUNT: &str = "acct_affinity_switch_b";
+    let store = Arc::new(MemoryAccountStore::default());
+    create_account(&store, ACCOUNT).await;
+    let affinity = Arc::new(MemorySessionAffinity::default());
+    let upstream = MockServer::start().await;
+    let provider =
+        provider_with_affinity_and_base_url(&store, Arc::clone(&affinity), upstream.uri());
+    let root = Arc::clone(&provider)
+        .execute(
+            responses_session_request(ROOT_SESSION),
+            context("req_live_rewrite_root", CancellationToken::new()),
+        )
+        .await
+        .expect("Responses binds the root before sending");
+    assert_eq!(root.metadata().provider_account_id().as_str(), ACCOUNT);
+    drop(root);
+    create_account(&store, OTHER_ACCOUNT).await;
+    store.set_scheduling(OTHER_ACCOUNT, None, AccountWeight::new(100).unwrap());
+
+    let result = provider
+        .execute(
+            live_request_with_headers(vec![ProviderHttpHeader::new(
+                "session-id",
+                Bytes::from_static(b"live-original-session"),
+            )]),
+            context_with_middleware(
+                "req_live_session_rewrite",
+                Arc::new(SessionRewriteMiddleware {
+                    session_id: ROOT_SESSION,
+                    selected_account: OTHER_ACCOUNT,
+                }),
+                false,
+            ),
+        )
+        .await;
+    let error = match result {
+        Ok(_) => panic!("rewritten session must not use the preselected account"),
+        Err(error) => error,
+    };
+    assert_eq!(error.send_state(), UpstreamSendState::NotSent);
+    assert_eq!(affinity.binding_count(), 2);
+    assert!(upstream.received_requests().await.unwrap().is_empty());
 }
 
 #[tokio::test]

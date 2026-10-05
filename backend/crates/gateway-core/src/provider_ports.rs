@@ -47,6 +47,17 @@ impl ProviderStoreError {
     }
 }
 
+impl From<crate::account::affinity::AffinityStoreError> for ProviderStoreError {
+    fn from(error: crate::account::affinity::AffinityStoreError) -> Self {
+        use crate::account::affinity::AffinityStoreErrorKind;
+        let kind = match error.kind() {
+            AffinityStoreErrorKind::Unavailable => ProviderStoreErrorKind::Unavailable,
+            AffinityStoreErrorKind::InvalidData => ProviderStoreErrorKind::InvalidData,
+        };
+        Self::new(kind, "account affinity")
+    }
+}
+
 /// 一个 Provider 的完整可重建调度状态
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderSchedulingState {
@@ -206,88 +217,9 @@ pub trait ProviderLeasePort: Send + Sync {
     }
 }
 
-/// Provider 从原始会话锚点派生的不可逆亲和键
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProviderSessionAffinityKey(String);
-
-impl ProviderSessionAffinityKey {
-    pub fn try_new(value: impl Into<String>) -> Result<Self, ProviderStoreError> {
-        let value = value.into();
-        if value.is_empty()
-            || value.len() > 128
-            || !value.bytes().all(|byte| {
-                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
-            })
-        {
-            return Err(ProviderStoreError::new(
-                ProviderStoreErrorKind::InvalidData,
-                "validate provider session affinity key",
-            ));
-        }
-        Ok(Self(value))
-    }
-
-    #[must_use]
-    pub fn expose_to_store(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for ProviderSessionAffinityKey {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("ProviderSessionAffinityKey([OPAQUE])")
-    }
-}
-
-/// 可丢失的会话到账号偏好；Provider 负责先把原始会话标识哈希为不透明键
-pub trait ProviderSessionAffinityPort: Send + Sync {
-    fn load<'a>(
-        &'a self,
-        provider_kind: &'a ProviderKind,
-        key: &'a ProviderSessionAffinityKey,
-    ) -> BoxFuture<'a, Result<Option<ProviderAccountId>, ProviderStoreError>>;
-
-    fn bind<'a>(
-        &'a self,
-        provider_kind: &'a ProviderKind,
-        key: &'a ProviderSessionAffinityKey,
-        account_id: &'a ProviderAccountId,
-        ttl: Duration,
-    ) -> BoxFuture<'a, Result<(), ProviderStoreError>>;
-
-    /// 仅在亲和键尚未绑定时写入候选账号，并返回原子操作后的实际绑定
-    ///
-    /// 已存在的绑定绝不会被候选账号覆盖；同一根会话的并发首次请求据此收敛到
-    /// 单一账号
-    /// TTL 只在首次写入时设置，已有绑定由成功反馈负责刷新
-    fn claim_or_load<'a>(
-        &'a self,
-        provider_kind: &'a ProviderKind,
-        key: &'a ProviderSessionAffinityKey,
-        candidate_account_id: &'a ProviderAccountId,
-        ttl: Duration,
-    ) -> BoxFuture<'a, Result<ProviderAccountId, ProviderStoreError>>;
-
-    /// 仅当当前绑定等于 `expected_account_id`（或键已过期）时写入新账号，
-    /// 并返回原子操作后的实际绑定
-    ///
-    /// Provider 用它迁移不可用账号，以及在成功后以 `expected == replacement`
-    /// 刷新 TTL；迟到的旧账号成功不能覆盖较新的会话 winner
-    fn compare_and_bind<'a>(
-        &'a self,
-        provider_kind: &'a ProviderKind,
-        key: &'a ProviderSessionAffinityKey,
-        expected_account_id: &'a ProviderAccountId,
-        replacement_account_id: &'a ProviderAccountId,
-        ttl: Duration,
-    ) -> BoxFuture<'a, Result<ProviderAccountId, ProviderStoreError>>;
-
-    fn clear<'a>(
-        &'a self,
-        provider_kind: &'a ProviderKind,
-        key: &'a ProviderSessionAffinityKey,
-    ) -> BoxFuture<'a, Result<bool, ProviderStoreError>>;
-}
+pub use crate::account::affinity::{
+    AffinityStore as ProviderSessionAffinityPort, SessionAffinityKey as ProviderSessionAffinityKey,
+};
 
 /// Provider 会话内已失败账号的可丢失排除集
 ///

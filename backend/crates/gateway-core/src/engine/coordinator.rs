@@ -405,7 +405,7 @@ struct FailureFinalization {
 
 #[derive(Debug, Clone)]
 struct PendingAttemptRetry {
-    account: crate::account::ProviderAccountId,
+    account: Option<crate::account::ProviderAccountId>,
     transport: AttemptTransport,
     delay: Duration,
     transport_recovery: bool,
@@ -971,7 +971,12 @@ where
         // 请求局部恢复钉选在此被一次性消费，只绑定本次 replay attempt；
         // 外部 required_account 每次 attempt 都重新生效
         let (pinned_account, attempt_transport) = if let Some(recovery) = pending_retry {
-            (Some(recovery.account), recovery.transport)
+            (
+                recovery
+                    .account
+                    .or_else(|| self.account_selection.required_account().cloned()),
+                recovery.transport,
+            )
         } else {
             match &self.account_selection {
                 AccountSelection::Diagnostic(account) => {
@@ -1102,9 +1107,10 @@ where
                 Ok(stream) => stream,
                 Err(error) => {
                     record_trace_error(&attempt_trace, &error);
-                    let continuation_retry =
-                        self.prepare_unavailable_native_continuation_replay(&error);
-                    let candidate_retry = !continuation_retry
+                    let continuation_retry = !error.retry_is_prohibited()
+                        && self.prepare_unavailable_native_continuation_replay(&error);
+                    let candidate_retry = !error.retry_is_prohibited()
+                        && !continuation_retry
                         && matches!(
                             error.kind(),
                             ProviderErrorKind::AccountCapacityUnavailable
@@ -1155,19 +1161,7 @@ where
                             | ProviderErrorKind::ConcurrencyQueueTimeout
                     ) && let Some(last_failure) = self.last_retryable_failure.take()
                     {
-                        let send_state = self.current_send_state();
-                        let mut events = std::mem::take(&mut self.last_retryable_failure_events);
-                        if !events.is_empty() {
-                            self.observe_atomic_terminal_events(&mut events);
-                            self.budget_attempt_already_counted = true;
-                            return Ok(Some(PullOutcome::TerminalFailure {
-                                events,
-                                error: last_failure,
-                                send_state,
-                            }));
-                        }
-                        self.finish_provider_error(&last_failure).await?;
-                        return Err(provider_engine_error(last_failure));
+                        return self.finish_retryable_failure(last_failure).await;
                     }
                     if !(matches!(
                         error.kind(),
@@ -1289,10 +1283,24 @@ where
             .await?;
             return Err(EngineError::ContinuationPinMismatch);
         }
-        // 换号预算按实际选中账号记账：与上一 attempt 选中账号不同即消耗一次。决策门
-        // （重试分类、候选推进、continuation 排除臂）已拦截预算耗尽后的必然换号，
-        // 这里是统一事实源，覆盖 Provider 自主换号（如 replay owner 重放）等路径；
-        // 首 attempt 与同账号钉选重试不计数。
+        // 会话绑定可在同账号恢复期间迁移；取得实际账号后仍须在轮询冷流前检查换号预算
+        // 超限时保留最后上游错误，不能为继续恢复而钉回前任账号
+        if self
+            .last_attempt_account
+            .as_ref()
+            .is_some_and(|account| account != metadata.provider_account_id())
+            && self.account_rotations >= crate::routing::MAX_ACCOUNT_ROTATION_ATTEMPTS
+        {
+            drop(stream);
+            let last_failure = self.last_retryable_failure.take().unwrap_or_else(|| {
+                ProviderError::new(
+                    ProviderErrorKind::NoEligibleAccount,
+                    UpstreamSendState::NotSent,
+                )
+            });
+            return self.finish_retryable_failure(last_failure).await;
+        }
+        // 换号预算按实际选中账号记账；首 attempt 与同账号重试不计数
         if self.last_attempt_account.as_ref() != Some(metadata.provider_account_id())
             && self
                 .last_attempt_account
@@ -1660,19 +1668,21 @@ where
                 let account = current.metadata.provider_account_id().clone();
                 self.credential_recovery_attempted_accounts
                     .insert(account.clone());
-                // 只钉住紧随其后的 replay attempt；replay 再遇可重试错误时，
-                // ordinary/continuation 重试门不受影响，仍可换号
-                self.recovery_account = Some(account);
+                // 会话绑定在重试前重读，不能用旧账号覆盖并发切换；其他请求只钉本次恢复
+                self.recovery_account =
+                    (!current.metadata.uses_session_account_binding()).then_some(account);
             } else if let Some(delay) = transient_retry {
                 self.pending_retry = Some(PendingAttemptRetry {
-                    account: current.metadata.provider_account_id().clone(),
+                    account: (!current.metadata.uses_session_account_binding())
+                        .then(|| current.metadata.provider_account_id().clone()),
                     transport: current.transport,
                     delay,
                     transport_recovery: false,
                 });
             } else if let Some((transport, delay)) = transport_recovery {
                 self.pending_retry = Some(PendingAttemptRetry {
-                    account: current.metadata.provider_account_id().clone(),
+                    account: (!current.metadata.uses_session_account_binding())
+                        .then(|| current.metadata.provider_account_id().clone()),
                     transport,
                     delay,
                     transport_recovery: true,
@@ -1818,7 +1828,8 @@ where
         match self.continuation_attempt {
             ContinuationAttempt::Native => match error.continuation_recovery_disposition() {
                 Some(ContinuationRecoveryDisposition::RetryExactConnection) => {
-                    self.recovery_account = Some(current.metadata.provider_account_id().clone());
+                    self.recovery_account = (!current.metadata.uses_session_account_binding())
+                        .then(|| current.metadata.provider_account_id().clone());
                 }
                 Some(ContinuationRecoveryDisposition::ProviderReplayAllowed) => {
                     self.continuation_attempt = ContinuationAttempt::ReplayOwner;
@@ -1899,6 +1910,25 @@ where
         self.continuation_attempt = ContinuationAttempt::ReplayAny;
         self.excluded_accounts.insert(pin.account().clone());
         true
+    }
+
+    async fn finish_retryable_failure(
+        &mut self,
+        error: ProviderError,
+    ) -> Result<Option<PullOutcome>, EngineError> {
+        let send_state = self.current_send_state();
+        let mut events = std::mem::take(&mut self.last_retryable_failure_events);
+        if !events.is_empty() {
+            self.observe_atomic_terminal_events(&mut events);
+            self.budget_attempt_already_counted = true;
+            return Ok(Some(PullOutcome::TerminalFailure {
+                events,
+                error,
+                send_state,
+            }));
+        }
+        self.finish_provider_error(&error).await?;
+        Err(provider_engine_error(error))
     }
 
     fn reset_uncommitted_observations(&mut self) {

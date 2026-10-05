@@ -42,8 +42,7 @@ fn operation(thread_id: &str) -> Operation {
 }
 
 #[tokio::test]
-async fn queued_session_sends_only_after_capacity_recovers_while_a_new_child_can_use_another_account()
- {
+async fn queued_session_and_new_child_keep_the_owner_when_its_wait_queue_is_full() {
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_subagent_a").await;
     let leases = Arc::new(TestLeaseCoordinator::default());
@@ -90,23 +89,19 @@ async fn queued_session_sends_only_after_capacity_recovers_while_a_new_child_can
     ));
     assert!(waiting.as_mut().now_or_never().is_none());
 
-    // 子线程还没有自己的绑定，父账号只是默认偏好，不能被强制挤进父账号队列
-    let mut child = provider
+    // 子线程与父线程共用绑定；队列已满时不能借用其他账号的空闲容量
+    let child = provider
+        .clone()
         .execute(
             planned_request("openai", operation("capacity-child")),
             queued_context("req_capacity_child"),
         )
-        .await
-        .unwrap();
-    assert_eq!(
-        child.metadata().provider_account_id().as_str(),
-        "acct_subagent_b"
+        .await;
+    assert!(
+        child.is_err(),
+        "full owner queue must not permit account migration"
     );
-    while let Some(event) = child.next().await {
-        event.unwrap();
-    }
-    drop(child);
-    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
 
     leases.busy_accounts.lock().unwrap().clear();
     let mut resumed = waiting.await.unwrap();
@@ -115,6 +110,21 @@ async fn queued_session_sends_only_after_capacity_recovers_while_a_new_child_can
         "acct_subagent_a"
     );
     while let Some(event) = resumed.next().await {
+        event.unwrap();
+    }
+    drop(resumed);
+    let mut child = provider
+        .execute(
+            planned_request("openai", operation("capacity-child")),
+            queued_context("req_capacity_child_after_recovery"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        child.metadata().provider_account_id().as_str(),
+        "acct_subagent_a"
+    );
+    while let Some(event) = child.next().await {
         event.unwrap();
     }
     let requests = server.received_requests().await.unwrap();
@@ -126,7 +136,7 @@ async fn queued_session_sends_only_after_capacity_recovers_while_a_new_child_can
         accounts,
         [
             "chatgpt-acct_subagent_a",
-            "chatgpt-acct_subagent_b",
+            "chatgpt-acct_subagent_a",
             "chatgpt-acct_subagent_a"
         ]
     );

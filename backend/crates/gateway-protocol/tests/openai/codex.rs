@@ -1,7 +1,7 @@
 //! 验证 Codex 会话身份优先级、轮次元数据与多代理模式解析
 
 use gateway_protocol::openai::{
-    codex_responses_request_semantics, codex_session_id, codex_thread_id,
+    codex_account_session_id, codex_responses_request_semantics, codex_session_id, codex_thread_id,
 };
 use serde_json::{Map, Value, json};
 
@@ -64,6 +64,69 @@ fn codex_session_should_accept_explicit_metadata_and_ignore_unrelated_ids() {
     ] {
         assert!(codex_session_id(&object(body), &Map::new()).is_none());
     }
+}
+
+#[test]
+fn account_session_should_prefer_logical_identity_without_changing_cache_routing() {
+    for (body, context, expected) in [
+        (
+            json!({"client_metadata":{"session_id":" logical-root "}}),
+            json!({"session_id":"cache-parent", "turn_metadata":"{\"session_id\":\"header-root\"}"}),
+            "logical-root",
+        ),
+        (
+            json!({"client_metadata":{"x-codex-turn-metadata":"{\"session_id\":\"logical-root\"}"}}),
+            json!({"session_id":"cache-parent", "turn_metadata":"{\"session_id\":\"header-root\"}"}),
+            "logical-root",
+        ),
+        (
+            json!({"client_metadata":{"x-codex-turn-metadata":"invalid"}}),
+            json!({"session_id":"cache-parent", "turn_metadata":"{\"session_id\":\"header-root\"}"}),
+            "header-root",
+        ),
+        (
+            json!({"session_id":"body-root"}),
+            json!({"session_id":"cache-parent"}),
+            "body-root",
+        ),
+        (
+            json!({"client_metadata":{"session_id":" "}}),
+            json!({"session_id":"cache-parent", "turn_metadata":"invalid"}),
+            "cache-parent",
+        ),
+    ] {
+        let body = object(body);
+        let context = object(context);
+        assert_eq!(
+            codex_account_session_id(&body, &context, "session_id").as_deref(),
+            Some(expected)
+        );
+        assert_eq!(
+            codex_session_id(&body, &context).as_deref(),
+            Some("cache-parent")
+        );
+    }
+}
+
+#[test]
+fn account_session_should_use_the_endpoint_session_field_before_cache_headers() {
+    let body = object(json!({"id":"search-root"}));
+    let context = object(json!({"session_id":"cache-parent"}));
+    assert_eq!(
+        codex_account_session_id(&body, &context, "id").as_deref(),
+        Some("search-root")
+    );
+}
+
+#[test]
+fn account_session_should_not_guess_from_cache_keys_thread_ids_or_prompt_content() {
+    let body = object(json!({
+        "id":"response-id",
+        "thread_id":"thread",
+        "prompt_cache_key":"cache-key",
+        "input":"same prompt"
+    }));
+    assert!(codex_account_session_id(&body, &Map::new(), "session_id").is_none());
 }
 
 #[test]

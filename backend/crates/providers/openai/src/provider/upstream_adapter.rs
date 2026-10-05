@@ -20,34 +20,64 @@ struct SelectedConnection {
 
 impl CodexProvider {
     // 与原生 terminal 共用一次选号结果，不能为适配器重新获取账号或租约
-    #[expect(clippy::too_many_arguments)]
-    pub(super) fn execute_upstream_adapter(
+    pub(super) async fn execute_upstream_adapter(
         self: Arc<Self>,
         operation: Operation,
         headers: Vec<MiddlewareHeader>,
         model: UpstreamModelId,
         context: AttemptContext,
-        lease: CodexCredentialLease,
-        account_selection_wait_ms: u64,
-        requirements: CapabilityRequirements,
+        selected: SelectedGenerate,
         adapter: Arc<dyn UpstreamAdapter>,
     ) -> Result<ProviderStream, ProviderError> {
-        if operation.capability_requirements() != requirements {
+        let SelectedGenerate {
+            mut lease,
+            session_affinity,
+            cyber_policy_key: _,
+            account_selection_wait_ms,
+            frozen_requirements,
+        } = selected;
+        if operation.capability_requirements() != frozen_requirements {
             return Err(provider_error(
                 ProviderErrorKind::InvalidRequest,
                 UpstreamSendState::NotSent,
             ));
         }
-        let requested_service_tier = match &operation {
+        let (requested_service_tier, translated_affinity) = match &operation {
             Operation::Generate(generate)
                 if generate.protocol_payload().protocol() == PROVIDER_NAME =>
             {
-                let request =
-                    CodexResponsesRequest::from_body(generate.protocol_payload().body().clone());
-                normalize_service_tier(request.service_tier())
+                let request = encode_generate_request(generate, model.as_str(), None)
+                    .map_err(map_request_error)?;
+                (
+                    normalize_service_tier(request.service_tier()),
+                    Some(derive_codex_session_affinity(
+                        &request,
+                        context.client_api_key_ref(),
+                    )),
+                )
             }
-            _ => None,
+            _ => (None, None),
         };
+        let session_affinity = if let Some(translated_affinity) = translated_affinity {
+            if session_affinity.as_ref().map(CodexSessionAffinity::key)
+                != translated_affinity.as_ref().map(CodexSessionAffinity::key)
+            {
+                self.selector
+                    .validate_translated_selection(&mut lease, translated_affinity.as_ref(), None)
+                    .await
+                    .map_err(|error| {
+                        map_session_selection_error(error, translated_affinity.is_some())
+                    })?;
+            }
+            translated_affinity
+        } else {
+            session_affinity
+        };
+        if let Some(ContinuationBinding::Pinned(pin)) = context.continuation()
+            && pin.account() != lease.account_id()
+        {
+            return Err(continuation_replay_required_error("scope_unavailable"));
+        }
         let lease = Arc::new(lease);
         let metadata = ProviderCallMetadata::new(
             ProviderKind::new(PROVIDER_NAME).map_err(|_| {
@@ -63,6 +93,11 @@ impl CodexProvider {
             account_selection_wait_ms,
             lease.capacity_snapshot(),
         ));
+        let metadata = if session_affinity.is_some() && !context.is_diagnostic_required_account() {
+            metadata.with_session_account_binding()
+        } else {
+            metadata
+        };
         let account = Arc::new(SelectedConnection {
             provider: Arc::clone(&self),
             lease: Arc::clone(&lease),

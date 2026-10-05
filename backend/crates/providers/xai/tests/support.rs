@@ -9,6 +9,9 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use chrono::Utc;
+use gateway_core::account::affinity::{
+    AccountBinding, AffinityStoreError, AffinityUpdate, BindingToken,
+};
 use gateway_core::account::{
     AccountConcurrencyLimit, AccountErrorReason, AccountStateChange, AccountWeight,
     CredentialCasOutcome, CredentialCasUpdate, CredentialCasUpdateParts, CredentialRevision,
@@ -789,47 +792,24 @@ impl ProviderSessionAffinityPort for TestSessionAffinity {
         &'a self,
         _provider_kind: &'a ProviderKind,
         _key: &'a ProviderSessionAffinityKey,
-    ) -> futures::future::BoxFuture<'a, Result<Option<ProviderAccountId>, ProviderStoreError>> {
+    ) -> futures::future::BoxFuture<'a, Result<Option<AccountBinding>, AffinityStoreError>> {
         Box::pin(async { Ok(None) })
     }
 
-    fn bind<'a>(
+    fn compare_and_set<'a>(
         &'a self,
         _provider_kind: &'a ProviderKind,
         _key: &'a ProviderSessionAffinityKey,
-        _account_id: &'a ProviderAccountId,
+        _expected: Option<&'a AccountBinding>,
+        selected_account: &'a ProviderAccountId,
         _ttl: Duration,
-    ) -> futures::future::BoxFuture<'a, Result<(), ProviderStoreError>> {
-        Box::pin(async { Ok(()) })
-    }
-
-    fn claim_or_load<'a>(
-        &'a self,
-        _provider_kind: &'a ProviderKind,
-        _key: &'a ProviderSessionAffinityKey,
-        candidate_account_id: &'a ProviderAccountId,
-        _ttl: Duration,
-    ) -> futures::future::BoxFuture<'a, Result<ProviderAccountId, ProviderStoreError>> {
-        Box::pin(async move { Ok(candidate_account_id.clone()) })
-    }
-
-    fn compare_and_bind<'a>(
-        &'a self,
-        _provider_kind: &'a ProviderKind,
-        _key: &'a ProviderSessionAffinityKey,
-        _expected_account_id: &'a ProviderAccountId,
-        replacement_account_id: &'a ProviderAccountId,
-        _ttl: Duration,
-    ) -> futures::future::BoxFuture<'a, Result<ProviderAccountId, ProviderStoreError>> {
-        Box::pin(async move { Ok(replacement_account_id.clone()) })
-    }
-
-    fn clear<'a>(
-        &'a self,
-        _provider_kind: &'a ProviderKind,
-        _key: &'a ProviderSessionAffinityKey,
-    ) -> futures::future::BoxFuture<'a, Result<bool, ProviderStoreError>> {
-        Box::pin(async { Ok(false) })
+    ) -> futures::future::BoxFuture<'a, Result<AffinityUpdate, AffinityStoreError>> {
+        Box::pin(async move {
+            Ok(AffinityUpdate::Applied(AccountBinding::new(
+                selected_account.clone(),
+                BindingToken::try_new("0123456789abcdef0123456789abcdef").expect("test token"),
+            )))
+        })
     }
 }
 

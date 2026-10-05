@@ -245,6 +245,7 @@ HTTP 字段见 [插件 API](api.md#12-插件管理)，更新与数据恢复见 [
 | `validation` | 纯值对象校验错误和文本约束，不依赖事件、执行错误或路由 |
 | `identity` | Provider 身份值 `ProviderKind`，只依赖纯校验 |
 | `account` | Provider 账号/credential/quota 值对象、持久化端口与请求级账号选择；`scope` 持有分组、账号目录和冻结账号范围 |
+| `account::affinity` | 会话当前账号、封闭的切换原因、发送前原子绑定与续期；协议身份、账号评分和容量等待由调用方提供，合同见[会话账号绑定](account-affinity.md) |
 | `policy` | Client API Key 准入、原始 Key 设置与客户端版本策略；只使用账号范围、Provider 身份和基础校验 |
 | `metering` | 标准化 Usage、金额、费用估算与费用明细；不表示账号或开票系统 |
 | `upstream` | 跨 Engine、Event、Error 与 Provider 共用的 transport 名称、发送状态和不透明上游值 |
@@ -349,9 +350,9 @@ Client Key 并发占用、账号调度槽位与请求恢复记录使用可续期
 只在选择账号等待队列时结合其他评分与当前进程内的实时等待人数。评分规则由 Core 账号模块统一拥有，
 `ConcurrencyWaitQueue` 在同一锁内读取队长并入队；Provider 只传递已限定续写范围的候选。
 排队系数为零时保留最短队列规则；已入队位置、队内 FIFO、取消回收、容量上限和请求共享等待预算保持原合同。
-高权重回切仅影响智能调度的软亲和：先验证候选资格，再决定是否由更高权重层覆盖亲和；同层亲和保留。
-Provider 限定的原生续写账号范围仍是硬约束。回切在请求选号时发生，不新增后台任务或主动历史重放。
-插件显式选号沿用既有候选校验和实际亲和结果，委托内置选号时才应用智能调度配置
+高权重回切只参与允许重新选择账号的请求，不能越过已有会话绑定或 Provider 限定的原生续写账号范围。
+回切在请求选号时发生，不新增后台任务或主动历史重放。
+插件显式选号同样服从当前绑定与候选资格，委托内置选号时才应用智能调度配置
 
 Client Key 鉴权完成后，API adapter 从有界请求头识别 Codex Desktop/CLI，Core 使用同一请求冻结的
 `RuntimeSnapshot` 比较对应最低版本。Desktop 优先于其 User-Agent 内嵌的 CLI/Core 标记；未知客户端不
@@ -567,14 +568,14 @@ Continuation 仍受原请求的 Client Key、账号范围、Provider 和发送/�
 - OpenAI 在交付前收到可安全重放的明确额度拒绝时，先隔离账号，再投影 `ClientReplayRequired`；
   丢弃未交付的原错误帧，由客户端提交完整历史开启新链，不把原增量输入交给其他账号。
   真实错误分类、状态码、发送状态和上游诊断保持不变，客户端合同见 [Responses API](api.md#3-openai-数据面与模型目录)
-- OpenAI 按 native → replay owner → replay any 推进，并保留官方 `previous_response_id` 语义
+- OpenAI 的 native 续接必须同时满足原 owner 与当前账号绑定；需要完整重放时由客户端开启新链，
+  新链重新解析当前绑定，不按前任账号选路，并保留官方 `previous_response_id` 恢复语义
 - xAI 使用客户端提交的完整历史作为重放输入
 - scope 外账号、跨 Key 复用或不明确发送结果均 fail closed
 
-会话亲和是优先选择提示，不是硬账号绑定；native continuation 才携带不可跨越的 owner 约束。
-OpenAI 启用账号排队时，可等待的已有亲和绑定优先保留；子线程首绑前继承的根偏好仍允许分流。
-快照满载、原子租约争用与已有等待者均进入原账号队列，等待重查仍执行完整资格校验。
-显式策略选号和内置高权重回切保留各自裁决；亲和等待不将暂忙升级成失效，也不覆盖原生续写约束
+OpenAI 会话账号绑定固定当前 owner，根线程与子线程共用绑定；首次绑定与允许的切换都在发送前原子裁决。
+临时容量不足只允许等待原账号或返回错误，评分与显式选号不能导致换号。响应反馈仅更新账号事实，
+不写入或续期绑定。身份、切换原因、七天 TTL 与并发合同由[会话账号绑定](account-affinity.md)统一定义
 
 ### 并发等待
 

@@ -1,5 +1,6 @@
 //! OpenAI 凭据合同测试入口，以及凭据编码、持久化与选号约束测试
 
+mod affinity;
 mod capacity;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -129,7 +130,7 @@ fn round_robin_attempt() -> AttemptContext {
 }
 
 #[tokio::test]
-async fn smart_reselection_respects_native_and_required_account_boundaries() {
+async fn smart_reselection_preserves_session_native_and_required_account_boundaries() {
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_original", "test-original");
     create_account(&store, "acct_primary", "test-primary");
@@ -147,7 +148,7 @@ async fn smart_reselection_respects_native_and_required_account_boundaries() {
         selector_with_affinity(&store, Arc::new(TestLeaseCoordinator::default()), affinity);
     let request_url = Url::parse(OFFICIAL_CODEX_BASE_URL).unwrap();
     for enabled in [false, true] {
-        for binding in ["soft", "required", "native"] {
+        for binding in ["session", "required", "native"] {
             let continuation = (binding == "native").then(|| {
                 ContinuationBinding::Pinned(NativeContinuationPin::new(
                     PreviousResponseId::new("client_response"),
@@ -191,11 +192,7 @@ async fn smart_reselection_respects_native_and_required_account_boundaries() {
                 .unwrap();
             assert_eq!(
                 selected.account_id().as_str(),
-                if enabled && binding == "soft" {
-                    "acct_primary"
-                } else {
-                    "acct_original"
-                },
+                "acct_original",
                 "{binding}, switchback={enabled}"
             );
         }
@@ -768,13 +765,14 @@ async fn selector_should_claim_the_initial_session_account_before_upstream_send(
         affinity
             .load(&provider, &key)
             .await
-            .expect("load claimed affinity"),
+            .expect("load claimed affinity")
+            .map(|binding| binding.account_id().clone()),
         Some(selected.account_id().clone())
     );
 }
 
 #[tokio::test]
-async fn record_success_should_not_overwrite_a_newer_session_winner() {
+async fn record_success_should_not_overwrite_or_renew_a_newer_session_winner() {
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_first", "at-first");
     create_account(&store, "acct_second", "at-second");
@@ -793,17 +791,17 @@ async fn record_success_should_not_overwrite_a_newer_session_winner() {
         .await
         .expect("seed newer affinity");
 
-    selector
-        .record_success(&first, Some(&key), first.id())
-        .await;
+    selector.record_success(&first).await;
 
     assert_eq!(
         affinity
             .load(&provider, &key)
             .await
-            .expect("load preserved affinity"),
+            .expect("load preserved affinity")
+            .map(|binding| binding.account_id().clone()),
         Some(second)
     );
+    assert!(affinity.renewal_ttls().is_empty());
 }
 
 #[tokio::test]
@@ -830,9 +828,7 @@ async fn selector_should_reuse_and_renew_the_account_bound_to_the_same_session()
         })
         .await
         .expect("select first account");
-    selector
-        .record_success(first.account(), Some(&key), first.account_id())
-        .await;
+    selector.record_success(first.account()).await;
     let first_account = first.account_id().clone();
 
     let second_attempt = attempt(BTreeSet::new());
@@ -859,41 +855,39 @@ async fn selector_should_reuse_and_renew_the_account_bound_to_the_same_session()
         affinity
             .load(&ProviderKind::new("openai").expect("provider"), &key)
             .await
-            .expect("load affinity"),
+            .expect("load affinity")
+            .map(|binding| binding.account_id().clone()),
         Some(first_account)
     );
     assert_eq!(
         affinity.renewal_ttls(),
-        vec![Duration::from_secs(24 * 60 * 60); 2],
-        "successful response and next selection both renew the binding"
+        vec![Duration::from_secs(7 * 24 * 60 * 60); 2],
+        "only the two pre-send selections renew the binding"
     );
 }
 
 #[tokio::test]
-async fn selector_should_replace_a_busy_affinity_binding_after_the_fallback_succeeds() {
+async fn selector_should_preserve_a_busy_binding_when_queueing_is_disabled() {
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_first", "at-first");
     create_account(&store, "acct_second", "at-second");
     let leases = Arc::new(TestLeaseCoordinator::default());
+    let bound = ProviderAccountId::new("acct_first").expect("bound account");
     leases
         .busy_accounts
         .lock()
-        .expect("busy account lock")
-        .insert(ProviderAccountId::new("acct_first").expect("account"));
+        .expect("busy accounts")
+        .insert(bound.clone());
     let affinity = Arc::new(MemorySessionAffinity::default());
     let provider = ProviderKind::new("openai").expect("provider");
     let key = ProviderSessionAffinityKey::try_new("busy-session").expect("affinity key");
-    let bound = ProviderAccountId::new("acct_first").expect("bound account");
-    affinity
-        .bind(&provider, &key, &bound, Duration::from_secs(60))
-        .await
-        .expect("seed affinity");
-    let selector = selector_with_affinity(&store, leases, Arc::clone(&affinity));
-    let request_url =
-        Url::parse("https://chatgpt.com/backend-api/codex/responses").expect("request URL");
+    affinity.seed_binding(&provider, key.expose_to_store(), bound.clone());
+    let original = affinity.load(&provider, &key).await.expect("binding");
+    let selector = selector_with_affinity(&store, leases.clone(), Arc::clone(&affinity));
+    let request_url = Url::parse(OFFICIAL_CODEX_BASE_URL).expect("request URL");
     let request_attempt = attempt(BTreeSet::new());
 
-    let selected = selector
+    let error = selector
         .select(&SelectCodexCredential {
             upstream_model: "gpt-5.4",
             request_url: &request_url,
@@ -901,26 +895,24 @@ async fn selector_should_replace_a_busy_affinity_binding_after_the_fallback_succ
             session_affinity_key: Some(&key),
         })
         .await
-        .expect("select fallback account");
-    selector
-        .record_success(selected.account(), Some(&key), &bound)
-        .await;
+        .expect_err("busy owner cannot switch");
 
-    assert_eq!(
-        (
-            selected.account_id().as_str(),
-            selected.affinity_hit(),
-            selected.escape_reason(),
-            selected.account_switch(),
-        ),
-        ("acct_second", false, Some("lease_saturated"), true)
+    assert!(
+        matches!(error, CredentialSelectionError::CapacityUnavailable { .. }),
+        "{error:?}"
     );
     assert_eq!(
-        affinity
-            .load(&provider, &key)
-            .await
-            .expect("load replaced affinity"),
-        Some(ProviderAccountId::new("acct_second").expect("second account"))
+        affinity.load(&provider, &key).await.expect("binding"),
+        original
+    );
+    assert!(affinity.renewal_ttls().is_empty());
+    assert!(
+        leases
+            .requests
+            .lock()
+            .expect("lease requests")
+            .iter()
+            .all(|request| request.account_id() == &bound)
     );
 }
 
@@ -998,8 +990,11 @@ async fn selector_should_escape_a_quota_exhausted_affinity_account() {
         .bind(&provider, &key, first.id(), Duration::from_secs(60))
         .await
         .expect("seed affinity");
-    let selector =
-        selector_with_affinity(&store, Arc::new(TestLeaseCoordinator::default()), affinity);
+    let selector = selector_with_affinity(
+        &store,
+        Arc::new(TestLeaseCoordinator::default()),
+        affinity.clone(),
+    );
     let request_url =
         Url::parse("https://chatgpt.com/backend-api/codex/responses").expect("request URL");
     let request_attempt = attempt(BTreeSet::new());
@@ -1022,6 +1017,16 @@ async fn selector_should_escape_a_quota_exhausted_affinity_account() {
             selected.account_switch(),
         ),
         ("acct_second", false, Some("quota_exhausted"), true)
+    );
+    assert_eq!(
+        affinity
+            .load(&provider, &key)
+            .await
+            .unwrap()
+            .unwrap()
+            .account_id(),
+        selected.account_id(),
+        "switch is committed before the selected request can be sent"
     );
 }
 
@@ -1378,7 +1383,7 @@ fn successful_upstream_response_recovers_non_quota_terminal_states() {
         let current = store.account("acct_primary").expect("stale account");
         let selector = selector(&store, Arc::new(TestLeaseCoordinator::default()));
 
-        block_on(selector.record_success(&current, None, current.id()));
+        block_on(selector.record_success(&current));
 
         assert_eq!(
             store
@@ -1657,7 +1662,7 @@ fn cloudflare_challenge_does_not_change_persisted_account_facts() {
             .credential_state(),
         CredentialState::Ready
     );
-    block_on(selector.record_success(lease.account(), None, lease.account_id()));
+    block_on(selector.record_success(lease.account()));
 }
 
 #[test]
@@ -2177,7 +2182,7 @@ fn model_access_never_escapes_to_a_forbidden_account_after_failover_or_required_
 }
 
 #[tokio::test]
-async fn model_access_overrides_soft_session_affinity() {
+async fn model_access_rejects_request_without_overriding_session_binding() {
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_primary", "at-primary");
     create_account(&store, "acct_other", "at-other");
@@ -2192,10 +2197,13 @@ async fn model_access_overrides_soft_session_affinity() {
         )
         .await
         .expect("bind");
-    let selector =
-        selector_with_affinity(&store, Arc::new(TestLeaseCoordinator::default()), affinity);
+    let selector = selector_with_affinity(
+        &store,
+        Arc::new(TestLeaseCoordinator::default()),
+        affinity.clone(),
+    );
     let attempt = model_restricted_attempt(None, BTreeSet::new());
-    let lease = selector
+    let error = selector
         .select(&SelectCodexCredential {
             upstream_model: "gpt-5.4",
             request_url: &Url::parse("https://chatgpt.com/backend-api/codex/responses")
@@ -2204,8 +2212,22 @@ async fn model_access_overrides_soft_session_affinity() {
             session_affinity_key: Some(&key),
         })
         .await
-        .expect("select pro");
-    assert_eq!(lease.account_id().as_str(), "acct_other");
+        .expect_err("owner cannot use requested model");
+    assert!(matches!(
+        error,
+        CredentialSelectionError::NoEligibleCredential
+    ));
+    assert_eq!(
+        affinity
+            .load(&ProviderKind::new("openai").unwrap(), &key)
+            .await
+            .unwrap()
+            .unwrap()
+            .account_id()
+            .as_str(),
+        "acct_primary"
+    );
+    assert!(affinity.renewal_ttls().is_empty());
 }
 
 #[test]

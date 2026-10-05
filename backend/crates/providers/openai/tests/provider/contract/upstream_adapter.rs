@@ -2,6 +2,10 @@
 
 use super::*;
 use gateway_core::account::AccountRuntimeSignals;
+use gateway_core::engine::policy::{
+    AccountScheduleDecision, AccountScheduleInput, ModelRouteDecision, ModelRouteInput,
+    RequestPolicyContext, RequestPolicyFault, RequestPolicyPlan,
+};
 use gateway_core::engine::upstream_adapter::{
     UpstreamAccountConnection, UpstreamAdapter, UpstreamAdapterInvocation, UpstreamAdapterPlan,
 };
@@ -258,6 +262,242 @@ async fn selected_adapter_connection(
         ProviderErrorKind::Cancelled
     );
     receiver.await.unwrap()
+}
+
+#[derive(Debug)]
+struct PreferOtherAccount {
+    preferred: ProviderAccountId,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl RequestPolicyPlan for PreferOtherAccount {
+    fn route_model(
+        &self,
+        _: ModelRouteInput,
+    ) -> BoxFuture<'static, Result<ModelRouteDecision, RequestPolicyFault>> {
+        Box::pin(async { Ok(ModelRouteDecision::Unhandled) })
+    }
+
+    fn schedule_account(
+        &self,
+        _: AccountScheduleInput,
+    ) -> BoxFuture<'static, Result<AccountScheduleDecision, RequestPolicyFault>> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let preferred = self.preferred.clone();
+        Box::pin(async move { Ok(AccountScheduleDecision::Pick(preferred)) })
+    }
+}
+
+fn binding_adapter_context(
+    request_id: &str,
+    selected: oneshot::Sender<SelectedConnection>,
+    policy: Option<Arc<dyn RequestPolicyPlan>>,
+    middleware: Option<Arc<dyn MiddlewarePlan>>,
+) -> AttemptContext {
+    let request_id = ModelRequestId::new(request_id).unwrap();
+    let key = ClientApiKeyId::new("key_openai_contract").unwrap();
+    let generation = ExtensionSetReference::new(
+        ExtensionSetId::new("adapter-account-binding-test".to_owned()).unwrap(),
+        Arc::new(TestExtensionLease),
+    );
+    let policy = policy.map(|policy| {
+        RequestPolicyContext::new(
+            policy,
+            generation.clone(),
+            request_id.clone(),
+            key.clone(),
+            Vec::new(),
+        )
+    });
+    AttemptContext::new(
+        RequestAttemptContext::new(request_id, key)
+            .with_request_policy(policy)
+            .with_middleware(
+                middleware
+                    .map(|middleware| FrozenMiddlewarePlan::new(middleware, generation.clone())),
+                Arc::from([]),
+                "/v1/responses".to_owned(),
+                ClientTransport::HttpSse,
+            )
+            .with_upstream_adapters(Some(
+                gateway_core::engine::upstream_adapter::FrozenUpstreamAdapterPlan::new(
+                    Arc::new(ConnectionProbe {
+                        selected: Arc::new(Mutex::new(Some(selected))),
+                    }),
+                    generation,
+                ),
+            )),
+        NonZeroU32::MIN,
+        SystemTime::now() + Duration::from_secs(5),
+        account_policy(),
+        AccountAttemptContext::new(BTreeSet::new(), None, None)
+            .with_account_scope(contract_account_scope()),
+        None,
+        CancellationToken::new(),
+    )
+}
+
+#[tokio::test]
+async fn upstream_adapter_should_establish_session_binding_before_execution() {
+    let store = Arc::new(MemoryAccountStore::default());
+    create_account(&store, "acct_provider_contract").await;
+    let affinity = Arc::new(MemorySessionAffinity::default());
+    let server = MockServer::start().await;
+    let provider = provider_with_affinity_and_base_url(&store, Arc::clone(&affinity), server.uri());
+    let (selected, receiver) = oneshot::channel();
+    let mut stream = provider
+        .execute(
+            planned_request(
+                "openai",
+                Operation::Generate(generate_with_session_context(
+                    "adapter-first-binding",
+                    None,
+                    None,
+                )),
+            ),
+            binding_adapter_context("req_adapter_first_binding", selected, None, None),
+        )
+        .await
+        .expect("adapter selection establishes the session owner");
+    assert_eq!(affinity.binding_count(), 1);
+    assert!(stream.metadata().uses_session_account_binding());
+    assert_eq!(
+        stream.metadata().provider_account_id().as_str(),
+        "acct_provider_contract"
+    );
+    assert_eq!(
+        stream.next().await.unwrap().unwrap_err().kind(),
+        ProviderErrorKind::Cancelled
+    );
+    assert_eq!(
+        receiver.await.unwrap().account_id().as_str(),
+        "acct_provider_contract"
+    );
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn upstream_adapter_should_keep_root_owner_despite_weight_and_plugin_preference() {
+    let store = Arc::new(MemoryAccountStore::default());
+    create_account(&store, "acct_affinity_switch_a").await;
+    let affinity = Arc::new(MemorySessionAffinity::default());
+    let server = MockServer::start().await;
+    let provider = provider_with_affinity_and_base_url(&store, Arc::clone(&affinity), server.uri());
+    let root = Arc::clone(&provider)
+        .execute(
+            planned_request(
+                "openai",
+                Operation::Generate(generate_with_session_context("adapter-root", None, None)),
+            ),
+            context("req_adapter_native_root", CancellationToken::new()),
+        )
+        .await
+        .expect("native root establishes the shared owner");
+    assert_eq!(
+        root.metadata().provider_account_id().as_str(),
+        "acct_affinity_switch_a"
+    );
+    drop(root);
+    create_account(&store, "acct_affinity_switch_b").await;
+    store.set_scheduling(
+        "acct_affinity_switch_b",
+        None,
+        AccountWeight::new(100).unwrap(),
+    );
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (selected, receiver) = oneshot::channel();
+    let mut stream = provider
+        .execute(
+            planned_request(
+                "openai",
+                Operation::Generate(generate_with_session_context(
+                    "adapter-root",
+                    Some("adapter-child"),
+                    None,
+                )),
+            ),
+            binding_adapter_context(
+                "req_adapter_bound_child",
+                selected,
+                Some(Arc::new(PreferOtherAccount {
+                    preferred: ProviderAccountId::new("acct_affinity_switch_b").unwrap(),
+                    calls: Arc::clone(&calls),
+                })),
+                None,
+            ),
+        )
+        .await
+        .expect("bound child keeps the native root account");
+    assert_eq!(
+        stream.metadata().provider_account_id().as_str(),
+        "acct_affinity_switch_a"
+    );
+    assert!(stream.metadata().uses_session_account_binding());
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(affinity.binding_count(), 1);
+    assert_eq!(
+        stream.next().await.unwrap().unwrap_err().kind(),
+        ProviderErrorKind::Cancelled
+    );
+    assert_eq!(
+        receiver.await.unwrap().account_id().as_str(),
+        "acct_affinity_switch_a"
+    );
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn upstream_adapter_should_reject_middleware_session_rewrite_to_a_different_owner() {
+    let store = Arc::new(MemoryAccountStore::default());
+    create_account(&store, "acct_affinity_switch_a").await;
+    let affinity = Arc::new(MemorySessionAffinity::default());
+    let server = MockServer::start().await;
+    let provider = provider_with_affinity_and_base_url(&store, Arc::clone(&affinity), server.uri());
+    let root = Arc::clone(&provider)
+        .execute(
+            planned_request(
+                "openai",
+                Operation::Generate(generate_with_session_context(
+                    "adapter-rewrite-root",
+                    None,
+                    None,
+                )),
+            ),
+            context("req_adapter_rewrite_seed", CancellationToken::new()),
+        )
+        .await
+        .expect("native root establishes the shared owner");
+    drop(root);
+    create_account(&store, "acct_affinity_switch_b").await;
+    store.set_scheduling(
+        "acct_affinity_switch_b",
+        None,
+        AccountWeight::new(100).unwrap(),
+    );
+    let (selected, receiver) = oneshot::channel();
+    let result = provider
+        .execute(
+            planned_request("openai", generate_operation()),
+            binding_adapter_context(
+                "req_adapter_rewrite_conflict",
+                selected,
+                None,
+                Some(Arc::new(RecordingMiddleware {
+                    observed: Default::default(),
+                    replacement: ("session_id".to_owned(), json!("adapter-rewrite-root")),
+                    request_headers: Vec::new(),
+                })),
+            ),
+        )
+        .await;
+    let error = match result {
+        Ok(_) => panic!("rewritten session must not be sent on the preselected account"),
+        Err(error) => error,
+    };
+    assert_eq!(error.send_state(), UpstreamSendState::NotSent);
+    assert!(receiver.await.is_err());
+    assert_eq!(affinity.binding_count(), 1);
+    assert!(server.received_requests().await.unwrap().is_empty());
 }
 
 #[tokio::test]

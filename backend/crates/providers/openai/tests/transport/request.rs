@@ -140,6 +140,58 @@ fn encoder_should_preserve_openai_wire_fields_without_deriving_accountless_pool_
 }
 
 #[test]
+fn encoder_should_share_logical_session_identity_without_rewriting_cache_routing() {
+    for (thread_id, cache_session) in [
+        ("fork-root", "parent-cache"),
+        ("child-thread", "fork-root"),
+        ("nested-child", "fork-root"),
+    ] {
+        let body = json!({
+            "input":"prompt",
+            "prompt_cache_key":"shared-cache",
+            "client_metadata":{"session_id":"fork-root", "thread_id":thread_id}
+        })
+        .as_object()
+        .expect("request object")
+        .clone();
+        let payload = ProtocolPayload::json_object("openai", body.clone())
+            .expect("OpenAI payload")
+            .with_context(Map::from_iter([(
+                "session_id".to_owned(),
+                json!(cache_session),
+            )]));
+        let encoded = encode_generate_request(
+            &GenerateRequest::from_protocol_payload(payload),
+            "gpt-test",
+            None,
+        )
+        .expect("encode logical session");
+
+        assert_eq!(
+            encoded.client_logical_session_id.as_deref(),
+            Some("fork-root")
+        );
+        assert_eq!(encoded.client_session_id.as_deref(), Some(cache_session));
+        assert_eq!(encoded.client_thread_id.as_deref(), Some(thread_id));
+        assert_eq!(
+            encoded.body().get("client_metadata"),
+            body.get("client_metadata")
+        );
+        assert_eq!(encoded.prompt_cache_key(), Some("shared-cache"));
+    }
+}
+
+#[test]
+fn encoder_should_not_use_prompt_cache_as_logical_session_identity() {
+    let body = json!({"input":"prompt", "prompt_cache_key":"shared-cache"})
+        .as_object()
+        .expect("request object")
+        .clone();
+    let encoded = encode_generate_request(&request(body), "gpt-test", None).expect("encode");
+    assert!(encoded.client_logical_session_id.is_none());
+}
+
+#[test]
 fn encoder_should_never_hash_prompt_content_into_an_accountless_pool_identity() {
     let request = |input: &str| {
         request(Map::from_iter([

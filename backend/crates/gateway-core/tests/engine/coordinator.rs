@@ -278,6 +278,10 @@ enum Script {
         account_id: &'static str,
         items: Vec<Result<GatewayEvent, ProviderError>>,
     },
+    SessionBoundStream {
+        account_id: &'static str,
+        items: Vec<Result<GatewayEvent, ProviderError>>,
+    },
     /// 产出 `items` 后永久悬挂的流；用于逼出会话级 deadline
     HangingStream {
         account_id: &'static str,
@@ -299,6 +303,7 @@ struct ScriptedProvider {
     scripts: Mutex<VecDeque<Script>>,
     contexts: Mutex<Vec<AttemptContext>>,
     operations: Mutex<Vec<Operation>>,
+    stream_items_polled: Arc<AtomicUsize>,
     released_leases: Arc<AtomicUsize>,
 }
 
@@ -325,6 +330,7 @@ impl ScriptedProvider {
             scripts: Mutex::new(scripts.into()),
             contexts: Mutex::new(Vec::new()),
             operations: Mutex::new(Vec::new()),
+            stream_items_polled: Arc::new(AtomicUsize::new(0)),
             released_leases: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -383,10 +389,12 @@ impl Provider for ScriptedProvider {
             .expect("scripts lock")
             .pop_front()
             .expect("one script per provider call");
+        let session_bound = matches!(&script, Script::SessionBoundStream { .. });
         match script {
             Script::Error(error) => Err(error),
             Script::Pending => futures::future::pending().await,
-            Script::Stream { account_id, items } => {
+            Script::Stream { account_id, items }
+            | Script::SessionBoundStream { account_id, items } => {
                 let candidate = request.candidate();
                 let metadata = ProviderCallMetadata::new(
                     candidate.provider().clone(),
@@ -398,11 +406,18 @@ impl Provider for ScriptedProvider {
                     UpstreamTransport::new("http_sse").expect("transport"),
                 )
                 .with_upstream_request_id(OpaqueUpstreamValue::new("upstream-request"));
+                let metadata = if session_bound {
+                    metadata.with_session_account_binding()
+                } else {
+                    metadata
+                };
+                let stream_items_polled = Arc::clone(&self.stream_items_polled);
                 Ok(ProviderStream::new(
                     metadata,
-                    Box::pin(futures::stream::iter(
-                        items.into_iter().map(canonical_provider_event),
-                    )),
+                    Box::pin(futures::stream::iter(items.into_iter().map(move |item| {
+                        stream_items_polled.fetch_add(1, Ordering::SeqCst);
+                        canonical_provider_event(item)
+                    }))),
                     TrackedLease(Arc::clone(&self.released_leases)),
                 ))
             }
@@ -2059,6 +2074,130 @@ fn unavailable_native_continuation_uses_provider_recovery_with_the_configured_ac
 }
 
 #[test]
+fn session_bound_native_retry_leaves_account_resolution_to_the_provider() {
+    let Operation::Generate(generate) = generate_operation() else {
+        panic!("generate operation");
+    };
+    let operation = Operation::Generate(
+        generate
+            .with_provider_session_state(ProviderSessionState::new("openai", Map::new()).unwrap()),
+    );
+    let route_plan = plan(&operation);
+    let (coordinator, _, provider) = coordinator(vec![
+        Script::SessionBoundStream {
+            account_id: "acct_first",
+            items: vec![Err(ProviderError::new(
+                ProviderErrorKind::Unavailable,
+                UpstreamSendState::NotSent,
+            )
+            .with_continuation_failure(ContinuationFailure::Busy)
+            .with_continuation_recovery_disposition(
+                ContinuationRecoveryDisposition::RetryExactConnection,
+            ))],
+        },
+        Script::Error(
+            ProviderError::new(
+                ProviderErrorKind::ContinuationRecoveryRequired,
+                UpstreamSendState::NotSent,
+            )
+            .with_continuation_failure(ContinuationFailure::HistoryUnavailable)
+            .with_continuation_recovery_disposition(
+                ContinuationRecoveryDisposition::ClientReplayRequired,
+            ),
+        ),
+    ]);
+    let continuation = NativeContinuationPin::new(
+        PreviousResponseId::new("previous"),
+        PreviousResponseId::new("upstream-previous"),
+        ClientApiKeyId::new("key_client_1").unwrap(),
+        ProviderKind::new("openai").unwrap(),
+        ProviderAccountId::new("acct_first").unwrap(),
+    );
+    let mut session = block_on(coordinator.start(
+        model_request(&operation, SystemTime::now() + Duration::from_secs(30)),
+        operation,
+        route_plan,
+        None,
+        Some(ContinuationBinding::Pinned(continuation)),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert!(matches!(
+        block_on(session.collect_uncommitted()),
+        Err(EngineError::Provider(_))
+    ));
+    let contexts = provider.contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 2);
+    assert_eq!(contexts[1].required_account(), None);
+    assert_eq!(
+        contexts[1].continuation_attempt(),
+        ContinuationAttempt::Native
+    );
+    assert_eq!(
+        contexts[1]
+            .continuation()
+            .unwrap()
+            .pinned()
+            .unwrap()
+            .account()
+            .as_str(),
+        "acct_first"
+    );
+}
+
+#[test]
+fn prohibited_prepare_retry_blocks_native_recovery_and_provider_fallback() {
+    for native in [false, true] {
+        for kind in [
+            ProviderErrorKind::NoEligibleAccount,
+            ProviderErrorKind::ProviderInfrastructureUnavailable,
+        ] {
+            let Operation::Generate(generate) = generate_operation() else {
+                panic!("generate operation");
+            };
+            let operation = Operation::Generate(generate.with_provider_session_state(
+                ProviderSessionState::new("openai", Map::new()).unwrap(),
+            ));
+            let route_plan = dual_provider_plan(&operation);
+            let store = Arc::new(FakeStore::default());
+            let openai = Arc::new(ScriptedProvider::new(vec![Script::Error(
+                ProviderError::new(kind, UpstreamSendState::NotSent).with_retry_prohibited(),
+            )]));
+            let xai = Arc::new(ScriptedProvider::named("xai", Vec::new()));
+            let mut registry = ProviderRegistry::builder();
+            registry.register(openai.clone()).unwrap();
+            registry.register(xai.clone()).unwrap();
+            let coordinator = AttemptCoordinator::new(GatewayEngine::new(store, registry.build()));
+            let continuation = native.then(|| {
+                ContinuationBinding::Pinned(NativeContinuationPin::new(
+                    PreviousResponseId::new("previous"),
+                    PreviousResponseId::new("upstream-previous"),
+                    ClientApiKeyId::new("key_client_1").unwrap(),
+                    ProviderKind::new("openai").unwrap(),
+                    ProviderAccountId::new("acct_openai_first").unwrap(),
+                ))
+            });
+            let mut session = block_on(coordinator.start(
+                model_request(&operation, SystemTime::now() + Duration::from_secs(30)),
+                operation,
+                route_plan,
+                None,
+                continuation,
+                CancellationToken::new(),
+            ))
+            .unwrap();
+            let EngineError::Provider(error) = block_on(session.collect_uncommitted()).unwrap_err()
+            else {
+                panic!("expected terminal Provider error");
+            };
+            assert_eq!(error.kind(), kind);
+            assert_eq!(openai.contexts.lock().unwrap().len(), 1);
+            assert!(xai.contexts.lock().unwrap().is_empty());
+        }
+    }
+}
+
+#[test]
 fn continuation_history_failure_without_replay_proof_is_delivered_without_hidden_retry() {
     let Operation::Generate(generate) = generate_operation() else {
         panic!("generate operation");
@@ -2666,6 +2805,141 @@ fn recovered_credential_retries_the_same_account_exactly_once() {
     assert_eq!(state.attempts.len(), 2);
     assert_eq!(state.intermediate_failures, 1);
     assert_eq!(state.finalizations[0].outcome, ExecutionOutcome::Succeeded);
+}
+
+#[test]
+fn session_bound_retries_resolve_the_current_account_without_a_stale_pin() {
+    for (failure, expected_transport) in [
+        (transient_rejection(), AttemptTransport::Default),
+        (
+            ProviderError::new(ProviderErrorKind::Unauthorized, UpstreamSendState::Sent)
+                .with_replay_safe()
+                .with_same_account_retry(),
+            AttemptTransport::Default,
+        ),
+        (
+            ProviderError::new(ProviderErrorKind::Transport, UpstreamSendState::NotSent)
+                .with_pre_delivery_transport_fallback(),
+            AttemptTransport::Fallback,
+        ),
+        (
+            ProviderError::new(ProviderErrorKind::Transport, UpstreamSendState::NotSent)
+                .with_connection_retry(AttemptTransport::Fallback),
+            AttemptTransport::Fallback,
+        ),
+    ] {
+        let operation = generate_operation();
+        let route_plan = plan(&operation);
+        let (coordinator, store, provider) = coordinator(vec![
+            Script::SessionBoundStream {
+                account_id: "acct_first",
+                items: vec![Err(failure)],
+            },
+            Script::SessionBoundStream {
+                account_id: "acct_second",
+                items: complete_stream(None),
+            },
+        ]);
+        let mut session = block_on(coordinator.start(
+            model_request(&operation, SystemTime::now() + Duration::from_secs(30)),
+            operation,
+            route_plan,
+            None,
+            None,
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        block_on(session.collect_uncommitted()).expect("current session owner succeeds");
+        block_on(session.commit_downstream(Some(200))).unwrap();
+        let contexts = provider.contexts.lock().unwrap();
+        assert_eq!(contexts.len(), 2);
+        assert_eq!(contexts[1].required_account(), None);
+        assert_eq!(contexts[1].transport(), expected_transport);
+        assert!(contexts[1].excluded_accounts().is_empty());
+        let state = store.state.lock().unwrap();
+        assert_eq!(state.attempts.len(), 2);
+        assert_eq!(state.finalizations[0].outcome, ExecutionOutcome::Succeeded);
+    }
+}
+
+#[test]
+fn session_bound_retry_does_not_bypass_ambiguity_or_downstream_commit() {
+    for committed in [false, true] {
+        let operation = generate_operation();
+        let route_plan = plan(&operation);
+        let mut items = Vec::new();
+        if committed {
+            items.push(Ok(GatewayEvent::Started(ResponseMeta::new(
+                "visible", "gpt-5",
+            ))));
+        }
+        items.push(Err(ProviderError::new(
+            ProviderErrorKind::Transport,
+            if committed {
+                UpstreamSendState::Sent
+            } else {
+                UpstreamSendState::Ambiguous
+            },
+        )
+        .with_replay_safe()
+        .with_pre_delivery_transport_fallback()));
+        let (coordinator, _, provider) = coordinator(vec![Script::SessionBoundStream {
+            account_id: "acct_first",
+            items,
+        }]);
+        let mut session = block_on(coordinator.start(
+            model_request(&operation, SystemTime::now() + Duration::from_secs(30)),
+            operation,
+            route_plan,
+            None,
+            None,
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        if committed {
+            block_on(session.next_event()).unwrap().unwrap();
+            block_on(session.commit_downstream(Some(200))).unwrap();
+        }
+        assert!(matches!(
+            block_on(session.next_event()),
+            Err(EngineError::Provider(_))
+        ));
+        assert_eq!(provider.contexts.lock().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn session_bound_transport_retry_preserves_an_explicit_required_account() {
+    let operation = generate_operation();
+    let route_plan = plan(&operation);
+    let (coordinator, _, provider) = coordinator(vec![
+        Script::SessionBoundStream {
+            account_id: "acct_first",
+            items: vec![Err(ProviderError::new(
+                ProviderErrorKind::Transport,
+                UpstreamSendState::NotSent,
+            )
+            .with_pre_delivery_transport_fallback())],
+        },
+        Script::SessionBoundStream {
+            account_id: "acct_first",
+            items: complete_stream(None),
+        },
+    ]);
+    let required = ProviderAccountId::new("acct_first").unwrap();
+    let mut session = block_on(coordinator.start(
+        model_request(&operation, SystemTime::now() + Duration::from_secs(30)),
+        operation,
+        route_plan,
+        Some(required.clone()),
+        None,
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    block_on(session.collect_uncommitted()).unwrap();
+    let contexts = provider.contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 2);
+    assert_eq!(contexts[1].required_account(), Some(&required));
 }
 
 #[test]
@@ -5200,6 +5474,153 @@ fn account_rotation_attempts_stop_at_the_independent_rotation_budget() {
     assert_eq!(state.finalizations[0].outcome, ExecutionOutcome::Failed);
     assert_eq!(state.finalizations[0].attempt_count, 4);
     assert_eq!(state.finalizations[0].upstream_status_code, Some(429));
+}
+
+#[test]
+fn session_bound_recovery_enforces_the_budget_on_the_actual_selected_account() {
+    for recovery in ["transient", "transport", "credential"] {
+        for same_owner in [false, true] {
+            let operation = generate_operation();
+            let route_plan = plan(&operation);
+            let failure = || match recovery {
+                "transient" => transient_rejection().with_status(503),
+                "transport" => {
+                    ProviderError::new(ProviderErrorKind::Transport, UpstreamSendState::NotSent)
+                        .with_status(503)
+                        .with_pre_delivery_transport_fallback()
+                }
+                _ => ProviderError::new(ProviderErrorKind::Unauthorized, UpstreamSendState::Sent)
+                    .with_status(401)
+                    .with_replay_safe()
+                    .with_same_account_retry(),
+            };
+            let mut scripts = ["acct_first", "acct_second", "acct_other", "acct_tool"]
+                .into_iter()
+                .map(|account_id| Script::SessionBoundStream {
+                    account_id,
+                    items: vec![Err(failure())],
+                })
+                .collect::<Vec<_>>();
+            scripts.push(Script::SessionBoundStream {
+                account_id: if same_owner {
+                    "acct_tool"
+                } else {
+                    "acct_wrong"
+                },
+                items: complete_stream(None),
+            });
+            let (coordinator, store, provider) = coordinator(scripts);
+            let mut session = block_on(coordinator.start(
+                model_request(&operation, SystemTime::now() + Duration::from_secs(30)),
+                operation,
+                route_plan,
+                None,
+                None,
+                CancellationToken::new(),
+            ))
+            .expect("start execution");
+            let result = block_on(session.collect_uncommitted());
+            if same_owner {
+                result.expect("same-account recovery remains allowed after three rotations");
+                block_on(session.commit_downstream(Some(200))).expect("commit success");
+            } else {
+                let EngineError::Provider(error) = result.expect_err("fourth rotation rejected")
+                else {
+                    panic!("original provider error must be preserved");
+                };
+                assert_eq!(error.kind(), failure().kind(), "{recovery}");
+                assert_eq!(
+                    error.upstream_status(),
+                    failure().upstream_status(),
+                    "{recovery}"
+                );
+                assert_eq!(
+                    provider.stream_items_polled.load(Ordering::SeqCst),
+                    4,
+                    "the fifth account's cold stream must never be polled: {recovery}"
+                );
+                assert_eq!(provider.released_leases.load(Ordering::SeqCst), 5);
+            }
+            let contexts = provider.contexts.lock().unwrap();
+            assert_eq!(
+                contexts.len(),
+                5,
+                "current owner must be resolved before checking the budget"
+            );
+            assert!(
+                contexts
+                    .iter()
+                    .all(|context| context.required_account().is_none())
+            );
+            let state = store.state.lock().unwrap();
+            assert_eq!(state.attempts.len(), if same_owner { 5 } else { 4 });
+            assert_eq!(state.finalizations.len(), 1);
+            assert_eq!(
+                state.finalizations[0].outcome,
+                if same_owner {
+                    ExecutionOutcome::Succeeded
+                } else {
+                    ExecutionOutcome::Failed
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn session_bound_rotation_budget_preserves_the_last_atomic_failure() {
+    let operation = generate_operation();
+    let route_plan = plan(&operation);
+    let mut scripts = ["acct_first", "acct_second", "acct_other", "acct_tool"]
+        .into_iter()
+        .map(|account_id| Script::SessionBoundStream {
+            account_id,
+            items: vec![Err(atomic_response_failed(account_id, "capacity rejected")
+                .with_transient_retry(
+                    NonZeroU32::MIN,
+                    Duration::ZERO,
+                    Duration::ZERO,
+                ))],
+        })
+        .collect::<Vec<_>>();
+    scripts.push(Script::SessionBoundStream {
+        account_id: "acct_wrong",
+        items: complete_stream(None),
+    });
+    let (coordinator, store, provider) = coordinator(scripts);
+    let mut session = block_on(coordinator.start(
+        model_request(&operation, SystemTime::now() + Duration::from_secs(30)),
+        operation,
+        route_plan,
+        None,
+        None,
+        CancellationToken::new(),
+    ))
+    .expect("start execution");
+    let terminal = block_on(session.next_event())
+        .expect("last atomic failure remains deliverable")
+        .expect("terminal failure batch");
+    assert_eq!(
+        terminal.commit_requirement(),
+        CommitRequirement::CommitBeforeDelivery
+    );
+    let events = terminal.into_provider_events();
+    let failed = events
+        .iter()
+        .filter_map(ProviderEvent::wire_event)
+        .find(|wire| wire.event_type() == Some("response.failed"))
+        .expect("original failure frame");
+    assert_eq!(
+        failed.data().pointer("/response/id"),
+        Some(&json!("acct_tool"))
+    );
+    block_on(session.commit_downstream(Some(200))).expect("commit failure");
+    assert!(matches!(
+        block_on(session.next_event()),
+        Err(EngineError::Provider(_))
+    ));
+    assert_eq!(provider.stream_items_polled.load(Ordering::SeqCst), 4);
+    assert_eq!(store.state.lock().unwrap().attempts.len(), 4);
 }
 
 #[test]

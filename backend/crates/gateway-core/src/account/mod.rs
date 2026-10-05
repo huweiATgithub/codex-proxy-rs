@@ -1,5 +1,6 @@
 //! Provider 账号领域、持久化端口与同一 target 内的账号选择
 
+pub mod affinity;
 mod error;
 mod location;
 pub use location::{InvalidRequestLocation, RequestLocation};

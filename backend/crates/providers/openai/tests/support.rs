@@ -8,6 +8,9 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use futures::future::BoxFuture;
+use gateway_core::account::affinity::{
+    AccountBinding, AffinityStoreError, AffinityStoreErrorKind, AffinityUpdate, BindingToken,
+};
 use gateway_core::account::{
     AccountConcurrencyLimit, AccountErrorReason, AccountRuntimeSignals, AccountStateChange,
     AccountWeight, CredentialCasOutcome, CredentialCasUpdate, CredentialCasUpdateParts,
@@ -728,9 +731,12 @@ impl ProviderLeasePort for TestLeaseCoordinator {
 
 #[derive(Default)]
 pub(crate) struct MemorySessionAffinity {
-    bindings: Mutex<BTreeMap<(String, String), ProviderAccountId>>,
+    bindings: Mutex<BTreeMap<(String, String), AccountBinding>>,
     lookups: Mutex<Vec<String>>,
     renewal_ttls: Mutex<Vec<Duration>>,
+    fail_load: AtomicBool,
+    fail_update: AtomicBool,
+    initial_claim_barrier: Mutex<Option<Arc<tokio::sync::Barrier>>>,
 }
 
 impl MemorySessionAffinity {
@@ -746,6 +752,21 @@ impl MemorySessionAffinity {
         self.bindings.lock().expect("session affinity lock").len()
     }
 
+    pub(crate) fn fail_load(&self) {
+        self.fail_load.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn fail_update(&self) {
+        self.fail_update.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn synchronize_initial_claims(&self, requests: usize) {
+        *self
+            .initial_claim_barrier
+            .lock()
+            .expect("claim barrier lock") = Some(Arc::new(tokio::sync::Barrier::new(requests)));
+    }
+
     pub(crate) fn seed_binding(
         &self,
         provider_kind: &ProviderKind,
@@ -754,8 +775,23 @@ impl MemorySessionAffinity {
     ) {
         self.bindings.lock().expect("session affinity lock").insert(
             (provider_kind.as_str().to_owned(), key.to_owned()),
-            account_id,
+            AccountBinding::new(
+                account_id,
+                BindingToken::try_new(uuid::Uuid::new_v4().simple().to_string())
+                    .expect("binding token"),
+            ),
         );
+    }
+
+    pub(crate) async fn bind(
+        &self,
+        provider_kind: &ProviderKind,
+        key: &ProviderSessionAffinityKey,
+        account_id: &ProviderAccountId,
+        _ttl: Duration,
+    ) -> Result<(), AffinityStoreError> {
+        self.seed_binding(provider_kind, key.expose_to_store(), account_id.clone());
+        Ok(())
     }
 }
 
@@ -764,8 +800,14 @@ impl ProviderSessionAffinityPort for MemorySessionAffinity {
         &'a self,
         provider_kind: &'a ProviderKind,
         key: &'a ProviderSessionAffinityKey,
-    ) -> BoxFuture<'a, Result<Option<ProviderAccountId>, ProviderStoreError>> {
+    ) -> BoxFuture<'a, Result<Option<AccountBinding>, AffinityStoreError>> {
         Box::pin(async move {
+            if self.fail_load.load(Ordering::SeqCst) {
+                return Err(AffinityStoreError::new(
+                    AffinityStoreErrorKind::Unavailable,
+                    "load in-memory account binding",
+                ));
+            }
             self.lookups
                 .lock()
                 .expect("session affinity lookup lock")
@@ -782,93 +824,56 @@ impl ProviderSessionAffinityPort for MemorySessionAffinity {
         })
     }
 
-    fn bind<'a>(
+    fn compare_and_set<'a>(
         &'a self,
         provider_kind: &'a ProviderKind,
         key: &'a ProviderSessionAffinityKey,
-        account_id: &'a ProviderAccountId,
-        _ttl: Duration,
-    ) -> BoxFuture<'a, Result<(), ProviderStoreError>> {
-        Box::pin(async move {
-            self.bindings.lock().expect("session affinity lock").insert(
-                (
-                    provider_kind.as_str().to_owned(),
-                    key.expose_to_store().to_owned(),
-                ),
-                account_id.clone(),
-            );
-            Ok(())
-        })
-    }
-
-    fn claim_or_load<'a>(
-        &'a self,
-        provider_kind: &'a ProviderKind,
-        key: &'a ProviderSessionAffinityKey,
-        candidate_account_id: &'a ProviderAccountId,
-        _ttl: Duration,
-    ) -> BoxFuture<'a, Result<ProviderAccountId, ProviderStoreError>> {
-        Box::pin(async move {
-            let mut bindings = self.bindings.lock().expect("session affinity lock");
-            Ok(bindings
-                .entry((
-                    provider_kind.as_str().to_owned(),
-                    key.expose_to_store().to_owned(),
-                ))
-                .or_insert_with(|| candidate_account_id.clone())
-                .clone())
-        })
-    }
-
-    fn compare_and_bind<'a>(
-        &'a self,
-        provider_kind: &'a ProviderKind,
-        key: &'a ProviderSessionAffinityKey,
-        expected_account_id: &'a ProviderAccountId,
-        replacement_account_id: &'a ProviderAccountId,
+        expected: Option<&'a AccountBinding>,
+        selected: &'a ProviderAccountId,
         ttl: Duration,
-    ) -> BoxFuture<'a, Result<ProviderAccountId, ProviderStoreError>> {
+    ) -> BoxFuture<'a, Result<AffinityUpdate, AffinityStoreError>> {
         Box::pin(async move {
+            if self.fail_update.load(Ordering::SeqCst) {
+                return Err(AffinityStoreError::new(
+                    AffinityStoreErrorKind::Unavailable,
+                    "update in-memory account binding",
+                ));
+            }
+            let initial_claim_barrier = expected
+                .is_none()
+                .then(|| {
+                    self.initial_claim_barrier
+                        .lock()
+                        .expect("claim barrier lock")
+                        .clone()
+                })
+                .flatten();
+            if let Some(barrier) = initial_claim_barrier {
+                barrier.wait().await;
+            }
             let binding_key = (
                 provider_kind.as_str().to_owned(),
                 key.expose_to_store().to_owned(),
             );
             let mut bindings = self.bindings.lock().expect("session affinity lock");
-            if bindings
-                .get(&binding_key)
-                .is_none_or(|current| current == expected_account_id)
-            {
-                bindings.insert(binding_key, replacement_account_id.clone());
-                self.renewal_ttls
-                    .lock()
-                    .expect("affinity TTL lock")
-                    .push(ttl);
-                return Ok(replacement_account_id.clone());
+            let current = bindings.get(&binding_key);
+            if current != expected {
+                return Ok(AffinityUpdate::Conflict(current.cloned()));
             }
-            bindings.get(&binding_key).cloned().ok_or_else(|| {
-                ProviderStoreError::new(
-                    gateway_core::provider_ports::ProviderStoreErrorKind::Unavailable,
-                    "resolve in-memory provider session affinity",
-                )
-            })
-        })
-    }
-
-    fn clear<'a>(
-        &'a self,
-        provider_kind: &'a ProviderKind,
-        key: &'a ProviderSessionAffinityKey,
-    ) -> BoxFuture<'a, Result<bool, ProviderStoreError>> {
-        Box::pin(async move {
-            Ok(self
-                .bindings
+            let binding = match current {
+                Some(current) if current.account_id() == selected => current.clone(),
+                _ => AccountBinding::new(
+                    selected.clone(),
+                    BindingToken::try_new(uuid::Uuid::new_v4().simple().to_string())
+                        .expect("binding token"),
+                ),
+            };
+            bindings.insert(binding_key, binding.clone());
+            self.renewal_ttls
                 .lock()
-                .expect("session affinity lock")
-                .remove(&(
-                    provider_kind.as_str().to_owned(),
-                    key.expose_to_store().to_owned(),
-                ))
-                .is_some())
+                .expect("affinity TTL lock")
+                .push(ttl);
+            Ok(AffinityUpdate::Applied(binding))
         })
     }
 }

@@ -235,6 +235,59 @@ fn changed_scores_keep_existing_position_until_account_becomes_ineligible() {
 }
 
 #[test]
+fn periodic_recheck_can_change_accounts_before_the_old_queue_head_finishes() {
+    block_on(async {
+        let queue = ConcurrencyWaitQueue::default();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let _old_head = queue.enqueue(&["a"], 2, deadline).unwrap();
+        let budget = ConcurrencyWaitBudget::default();
+        let mut waiting = CapacityWait::new(
+            &queue,
+            ConcurrencyQueuePolicy {
+                max_waiting: 2,
+                timeout: Duration::from_secs(2),
+            },
+            SystemTime::now() + Duration::from_secs(2),
+            &budget,
+        )
+        .with_periodic_recheck();
+
+        waiting.wait(&["a"]).await.unwrap();
+        assert!(!waiting.can_try(&"a"));
+        waiting.wait(&["b"]).await.unwrap();
+        assert!(waiting.can_try(&"b"));
+        assert!(!waiting.can_try(&"a"));
+        drop(waiting);
+        assert!(!queue.has_waiters(&"b"));
+        // 新目标上的等待已释放旧 ticket，A 的全部等待名额仍可正常回收
+        let _old_tail = queue.enqueue(&["a"], 2, deadline).unwrap();
+    });
+}
+
+#[test]
+fn periodic_recheck_still_honors_the_shared_wait_deadline() {
+    block_on(async {
+        let queue = ConcurrencyWaitQueue::default();
+        let budget = ConcurrencyWaitBudget::default();
+        let mut waiting = CapacityWait::new(
+            &queue,
+            ConcurrencyQueuePolicy {
+                max_waiting: 2,
+                timeout: Duration::from_millis(20),
+            },
+            SystemTime::now() + Duration::from_secs(2),
+            &budget,
+        )
+        .with_periodic_recheck();
+        assert_eq!(waiting.wait(&["a"]).await, Err(QueueRejection::Timeout));
+        assert_eq!(waiting.wait(&["b"]).await, Err(QueueRejection::Timeout));
+        drop(waiting);
+        assert!(!queue.has_waiters(&"a"));
+        assert!(!queue.has_waiters(&"b"));
+    });
+}
+
+#[test]
 fn high_priority_waiters_go_ahead_of_normal_waiters_and_keep_fifo_among_themselves() {
     block_on(async {
         let queue = ConcurrencyWaitQueue::default();

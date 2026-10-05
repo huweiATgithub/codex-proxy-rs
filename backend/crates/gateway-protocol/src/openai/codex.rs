@@ -6,12 +6,32 @@ const MULTI_AGENT_MODE_OPEN_TAG: &str = "<multi_agent_mode>";
 const MULTI_AGENT_MODE_CLOSE_TAG: &str = "</multi_agent_mode>";
 const PROACTIVE_MULTI_AGENT_MODE_PREFIX: &str = "Proactive multi-agent delegation is active.";
 
-/// 各 Codex 端点共用的显式根会话身份
-/// 连接边界的 session_id 优先，
-/// 正文及官方 metadata 只做回退；不从 turn、window 或请求内容猜测归属
+/// Codex 上游会话头使用的缓存路由身份
+/// 连接边界的 session_id 优先，正文及官方 metadata 只做回退
 #[must_use]
 pub fn codex_session_id(body: &Map<String, Value>, context: &Map<String, Value>) -> Option<String> {
     codex_identity_field(body, context, "session_id")
+}
+
+/// Codex 根线程与后代共享的逻辑会话身份
+/// ephemeral fork 的会话头可继承父缓存路由，账号绑定优先使用明确的逻辑元数据
+#[must_use]
+pub fn codex_account_session_id(
+    body: &Map<String, Value>,
+    context: &Map<String, Value>,
+    body_session_field: &str,
+) -> Option<String> {
+    client_metadata_string(body, "session_id")
+        .map(str::to_owned)
+        .or_else(|| turn_metadata_identity_field(request_turn_metadata(body), "session_id"))
+        .or_else(|| {
+            turn_metadata_identity_field(
+                non_empty_string(context.get("turn_metadata")),
+                "session_id",
+            )
+        })
+        .or_else(|| non_empty_string(body.get(body_session_field)).map(str::to_owned))
+        .or_else(|| codex_identity_field(body, context, "session_id"))
 }
 
 /// 各 Codex 端点共用的显式线程身份，与根会话采用相同的来源优先级
@@ -40,6 +60,11 @@ fn codex_identity_field(
                 .and_then(|context| non_empty_string(context.get(field)))
                 .map(str::to_owned)
         })
+}
+
+fn turn_metadata_identity_field(metadata: Option<&str>, field: &str) -> Option<String> {
+    let metadata: Value = serde_json::from_str(metadata?).ok()?;
+    non_empty_string(metadata.get(field)).map(str::to_owned)
 }
 
 /// 从 OpenAI Responses 请求中提取的稳定 Codex 请求语义

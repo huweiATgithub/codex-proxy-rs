@@ -1,57 +1,27 @@
-//! OpenAI 会话及子线程到 Store 不透明账号亲和键及诊断上下文的单向派生
+//! OpenAI 逻辑会话到 Store 不透明账号绑定键及诊断上下文的单向派生
 
-use std::time::Duration;
-
-use gateway_core::operation::RawJsonPayload;
+use gateway_core::engine::middleware::MiddlewareHeader;
+use gateway_core::operation::{ProviderHttpRequest, RawJsonPayload};
 use gateway_core::policy::ClientApiKeyId;
 use gateway_core::provider_ports::ProviderSessionAffinityKey;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::transport::protocol::responses::CodexResponsesRequest;
-use crate::transport::request::derive_conversation_anchor;
 
 const AFFINITY_KEY_HASH_LENGTH: usize = 12;
-pub(crate) const CODEX_ROOT_SESSION_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// 一次请求派生出的账号亲和键及其结构化日志上下文
 pub(crate) struct CodexSessionAffinity {
     key: ProviderSessionAffinityKey,
-    root_key: Option<ProviderSessionAffinityKey>,
     key_hash: String,
-    anchor_source: &'static str,
-    anchor: String,
-    session_id: Option<String>,
+    session_id: String,
 }
 
 impl CodexSessionAffinity {
     #[must_use]
     pub(crate) const fn key(&self) -> &ProviderSessionAffinityKey {
         &self.key
-    }
-
-    pub(crate) fn root_key(&self) -> Option<&ProviderSessionAffinityKey> {
-        self.root_key.as_ref()
-    }
-
-    /// 子线程首次选号继承根会话偏好，之后仅更新自己的绑定
-    fn with_thread(mut self, thread_id: Option<&str>) -> Option<Self> {
-        if let Some(thread_id) = non_empty(thread_id)
-            && self
-                .session_id
-                .as_deref()
-                .is_some_and(|root| root != thread_id)
-        {
-            let child_key = opaque_affinity_key(
-                "child-thread",
-                &format!("{}\0{thread_id}", self.key.expose_to_store()),
-            )?;
-            self.root_key = Some(std::mem::replace(&mut self.key, child_key));
-            self.key_hash = short_key_hash(&self.key);
-            self.anchor_source = "child-thread";
-            self.anchor = thread_id.to_owned();
-        }
-        Some(self)
     }
 
     #[must_use]
@@ -67,27 +37,17 @@ impl CodexSessionAffinity {
 
     #[must_use]
     pub(crate) const fn anchor_source(&self) -> &'static str {
-        self.anchor_source
+        "root-session"
     }
 
     #[must_use]
     pub(crate) fn anchor(&self) -> &str {
-        &self.anchor
+        &self.session_id
     }
 
     #[must_use]
-    pub(crate) fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
-    }
-
-    #[must_use]
-    pub(crate) const fn session_id_present(&self) -> bool {
-        self.session_id.is_some()
-    }
-
-    #[must_use]
-    pub(crate) fn into_key(self) -> ProviderSessionAffinityKey {
-        self.key
+    pub(crate) fn session_id(&self) -> &str {
+        &self.session_id
     }
 }
 
@@ -109,10 +69,8 @@ pub(crate) fn derive_codex_session_affinity(
     request: &CodexResponsesRequest,
     client_api_key_id: &ClientApiKeyId,
 ) -> Option<CodexSessionAffinity> {
-    let session_id = non_empty(request.client_session_id.as_deref()).map(str::to_owned);
-    let (anchor_source, anchor) = derive_account_affinity_anchor(request)?;
-    session_affinity(anchor_source, anchor, session_id, client_api_key_id)?
-        .with_thread(request.client_thread_id.as_deref())
+    let session_id = non_empty(request.client_logical_session_id.as_deref())?.to_owned();
+    session_affinity(session_id, client_api_key_id)
 }
 
 /// 原始 JSON 端点只读取会话身份，发送时仍保留原始字节
@@ -124,26 +82,45 @@ pub(crate) fn derive_codex_endpoint_session_affinity(
     body_session_field: &str,
 ) -> Option<CodexSessionAffinity> {
     let body = serde_json::from_slice::<Map<String, Value>>(payload.body()).unwrap_or_default();
-    let session_id =
-        gateway_protocol::openai::codex_session_id(&body, payload.context()).or_else(|| {
-            non_empty(body.get(body_session_field).and_then(Value::as_str)).map(str::to_owned)
+    let session_id = gateway_protocol::openai::codex_account_session_id(
+        &body,
+        payload.context(),
+        body_session_field,
+    )?;
+    session_affinity(session_id, client_api_key_id)
+}
+
+/// Live 正文可能是 SDP 或 multipart，只从发送时有效的显式会话头取得绑定
+/// 中间件覆盖同名协议头，多值头采用首值；优先 session-id，再回退 x-session-id
+pub(crate) fn derive_codex_live_session_affinity(
+    request: &ProviderHttpRequest,
+    middleware_headers: &[MiddlewareHeader],
+    client_api_key_id: &ClientApiKeyId,
+) -> Option<CodexSessionAffinity> {
+    let session_id = ["session-id", "x-session-id"]
+        .into_iter()
+        .find_map(|name| {
+            let value = middleware_headers
+                .iter()
+                .find(|header| header.name().eq_ignore_ascii_case(name))
+                .map(MiddlewareHeader::value)
+                .or_else(|| {
+                    request
+                        .headers()
+                        .iter()
+                        .find(|header| header.name().eq_ignore_ascii_case(name))
+                        .map(gateway_core::operation::ProviderHttpHeader::value)
+                })?;
+            non_empty(std::str::from_utf8(value).ok())
         })?;
-    session_affinity(
-        "root-session",
-        session_id.clone(),
-        Some(session_id),
-        client_api_key_id,
-    )?
-    .with_thread(gateway_protocol::openai::codex_thread_id(&body, payload.context()).as_deref())
+    session_affinity(session_id.to_owned(), client_api_key_id)
 }
 
 fn session_affinity(
-    anchor_source: &'static str,
-    anchor: String,
-    session_id: Option<String>,
+    session_id: String,
     client_api_key_id: &ClientApiKeyId,
 ) -> Option<CodexSessionAffinity> {
-    let session_key = opaque_affinity_key(anchor_source, &anchor)?;
+    let session_key = opaque_affinity_key("root-session", &session_id)?;
     let key = opaque_affinity_key(
         "client-session",
         &format!(
@@ -155,10 +132,7 @@ fn session_affinity(
     let key_hash = short_key_hash(&key);
     Some(CodexSessionAffinity {
         key,
-        root_key: None,
         key_hash,
-        anchor_source,
-        anchor,
         session_id,
     })
 }
@@ -169,31 +143,6 @@ fn short_key_hash(key: &ProviderSessionAffinityKey) -> String {
         .chars()
         .take(AFFINITY_KEY_HASH_LENGTH)
         .collect()
-}
-
-/// 先确定根会话锚点，显式子线程在此基础上派生自己的绑定
-fn derive_account_affinity_anchor(
-    request: &CodexResponsesRequest,
-) -> Option<(&'static str, String)> {
-    non_empty(request.client_session_id.as_deref())
-        .map(|value| ("root-session", value.to_owned()))
-        .or_else(|| {
-            non_empty(request.client_conversation_id.as_deref())
-                .map(|value| ("root-conversation", value.to_owned()))
-        })
-        .or_else(|| {
-            request
-                .explicit_prompt_cache_key
-                .then(|| request.prompt_cache_key())
-                .flatten()
-                .and_then(|value| non_empty(Some(value)))
-                .map(|value| ("root-prompt-cache", value.to_owned()))
-        })
-        .or_else(|| {
-            non_empty(request.local_conversation_id.as_deref())
-                .map(|value| ("local-conversation", value.to_owned()))
-        })
-        .or_else(|| derive_conversation_anchor(request))
 }
 
 fn opaque_affinity_key(domain: &str, value: &str) -> Option<ProviderSessionAffinityKey> {
