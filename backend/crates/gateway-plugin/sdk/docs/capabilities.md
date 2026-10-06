@@ -253,8 +253,8 @@ HTTP 总入口统一包裹原生路由，`dispatch_http` 复用同一路由与�
 返回 `ServiceResponse::from_result::<O>(result)` 可以改写结果、短路或恢复业务错误；
 不感兴趣的操作调用 `forward()`。公开值完整传递，类型校验不承担字段权限控制
 
-当前登记 `settings` 的 11 个操作：`Load`、`Replace`、`ApiKeyExists`、`RegenerateApiKey`、`DeleteApiKey`、
-`Pricing`、`PreviewPricingSync`、`Sync`、`Update`、`ClientProfileOptions`、`PreviewClientProfile`。
+当前登记 `settings` 的 12 个操作：`Load`、`Replace`、`ApiKeyExists`、`RegenerateApiKey`、`DeleteApiKey`、
+`Pricing`、`PreviewPricingSync`、`Sync`、`Update`、`ClientProfileOptions`、`PreviewClientProfile`、`RefreshClientProfiles`。
 插件回调和 CLI 经注册表主动调用时统一进入一次 `service` 组合；网关原生设置接口由 HTTP 总入口包裹。
 各入口共用同一业务实现，业务方法内部调用不重复进入 `service` 组合。
 其他管理接口复用既有 HTTP 路由，不要求按内部方法另建服务目录；既有账号、Key 等资源回调不自动进入 `service` 组合

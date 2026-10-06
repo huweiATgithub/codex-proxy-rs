@@ -179,6 +179,11 @@ pub trait ProviderAdmin: Send + Sync {
         Err(ProviderAdminError::new(ProviderAdminErrorKind::Unsupported))
     }
 
+    /// 刷新 Provider-owned 客户端身份目录，不修改持久化选择
+    async fn refresh_client_profiles(&self) -> Result<(), ProviderAdminError> {
+        Err(ProviderAdminError::new(ProviderAdminErrorKind::Unsupported))
+    }
+
     /// 没有持久选择时使用的 Provider 默认画像；只返回已准备的本地事实
     fn default_client_profile(&self) -> Option<gateway_core::account::OpaqueProviderData> {
         None
