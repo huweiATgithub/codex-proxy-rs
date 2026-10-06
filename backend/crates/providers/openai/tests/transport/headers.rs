@@ -881,10 +881,17 @@ async fn concurrent_request_profiles_emit_independent_http_identities() {
 
 #[tokio::test]
 async fn tui_and_exec_send_the_same_complete_identity_over_http_and_websocket() {
+    use gateway_core::account::OpaqueProviderData;
+    use provider_openai::transport::profile::identity::RequestProfileSelection;
     use provider_openai::transport::profile::selection::{
         CliEntry, ClientKind, ClientPlatform, ClientProfileSelection, VersionMode,
     };
-    for (entry, name) in [(CliEntry::Tui, "codex-tui"), (CliEntry::Exec, "codex_exec")] {
+    for (entry, name, catalog) in [
+        (CliEntry::Tui, "codex-tui", false),
+        (CliEntry::Exec, "codex_exec", false),
+        (CliEntry::Tui, "codex-tui", true),
+        (CliEntry::Exec, "codex_exec", true),
+    ] {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let expected =
@@ -927,6 +934,23 @@ async fn tui_and_exec_send_the_same_complete_identity_over_http_and_websocket() 
         }
         .resolve(&state)
         .unwrap();
+        let profile = if catalog {
+            RequestProfileSelection::parse(&OpaqueProviderData::new(
+                json!({"mode":"catalog", "versionMode":"latest", "entry":{
+                    "client": if entry == CliEntry::Tui { "cli" } else { "exec" },
+                    "environment":"linux-alpine-x64", "release":"0.157.0",
+                    "userAgent":profile.user_agent(),
+                }})
+                .as_object()
+                .unwrap()
+                .clone(),
+            ))
+            .unwrap()
+            .resolve(&state)
+            .unwrap()
+        } else {
+            profile
+        };
         let client = CodexBackendClient::new(
             reqwest::Client::builder().no_proxy().build().unwrap(),
             format!("http://{address}"),
