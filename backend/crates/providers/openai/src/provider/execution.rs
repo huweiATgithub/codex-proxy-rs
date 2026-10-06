@@ -4,6 +4,12 @@ use gateway_core::metering::{CalculatedCost, Usage};
 
 use super::*;
 use gateway_core::operation::RawJsonPayload;
+use gateway_core::provider_ports::ProviderSessionAlias;
+
+struct ImageSessionAffinity {
+    affinity: Option<CodexSessionAffinity>,
+    turn_alias: Option<(ProviderSessionAffinityKey, ProviderSessionAlias)>,
+}
 
 impl CodexProvider {
     pub(super) async fn execute_image(
@@ -33,7 +39,8 @@ impl CodexProvider {
             .map(str::to_owned);
         let session_affinity = self
             .image_session_affinity(image.payload(), &[], &context)
-            .await?;
+            .await?
+            .affinity;
         self.execute_raw_json_endpoint(
             context,
             RawJsonEndpointRequest {
@@ -54,9 +61,12 @@ impl CodexProvider {
         payload: &RawJsonPayload,
         headers: &[MiddlewareHeader],
         context: &AttemptContext,
-    ) -> Result<Option<CodexSessionAffinity>, ProviderError> {
+    ) -> Result<ImageSessionAffinity, ProviderError> {
         if context.is_diagnostic_required_account() {
-            return Ok(None);
+            return Ok(ImageSessionAffinity {
+                affinity: None,
+                turn_alias: None,
+            });
         }
         let explicit = derive_endpoint_affinity_with_headers(
             payload,
@@ -74,11 +84,10 @@ impl CodexProvider {
                     .get("image_turn_id")
                     .and_then(Value::as_str)
             });
-        let inferred = if let Some(alias) =
-            turn.and_then(|turn| derive_turn_alias(turn, context.client_api_key_ref()))
-        {
+        let turn = turn.and_then(|turn| derive_turn_alias(turn, context.client_api_key_ref()));
+        let inferred = if let Some(alias) = turn.as_ref() {
             self.selector
-                .session_for_turn(&alias)
+                .session_for_turn(alias)
                 .await
                 .map_err(map_selection_error)?
         } else {
@@ -98,9 +107,14 @@ impl CodexProvider {
         let follow_only = inferred
             .as_ref()
             .is_some_and(CodexSessionAffinity::follow_only);
-        Ok(explicit
-            .or(inferred)
-            .map(|affinity| affinity.with_follow_only(follow_only)))
+        // 续期保留关联原有权限，显式请求带来的额外限制只属于本次调度
+        let turn_alias = turn.zip(inferred.as_ref().map(CodexSessionAffinity::to_alias));
+        Ok(ImageSessionAffinity {
+            affinity: explicit
+                .or(inferred)
+                .map(|affinity| affinity.with_follow_only(follow_only)),
+            turn_alias,
+        })
     }
 
     pub(super) async fn execute_search(
@@ -201,24 +215,48 @@ impl CodexProvider {
         mut lease: CodexCredentialLease,
         account_selection_wait_ms: u64,
     ) -> Result<ProviderStream, ProviderError> {
-        let affinity = match &operation {
+        let (affinity, turn_alias) = match &operation {
             Operation::GenerateImage(image) => {
-                self.image_session_affinity(image.payload(), &middleware_headers, &context)
-                    .await?
+                let resolved = self
+                    .image_session_affinity(image.payload(), &middleware_headers, &context)
+                    .await?;
+                (resolved.affinity, resolved.turn_alias)
             }
-            Operation::Search(search) => derive_endpoint_affinity_with_headers(
-                search.payload(),
-                context.client_api_key_ref(),
-                "id",
-                &middleware_headers,
+            Operation::Search(search) => (
+                derive_endpoint_affinity_with_headers(
+                    search.payload(),
+                    context.client_api_key_ref(),
+                    "id",
+                    &middleware_headers,
+                ),
+                None,
             ),
-            _ => None,
+            _ => (None, None),
         };
         if !context.is_diagnostic_required_account() {
             self.selector
-                .validate_translated_selection(&mut lease, affinity.as_ref(), None)
+                .validate_translated_selection(
+                    &mut lease,
+                    affinity.as_ref(),
+                    None,
+                    context
+                        .account_selection_policy()
+                        .openai_session_binding_ttl(),
+                )
                 .await
                 .map_err(map_selection_error)?;
+            if let Some((turn, alias)) = turn_alias {
+                self.selector
+                    .remember_turn(
+                        &turn,
+                        &alias,
+                        context
+                            .account_selection_policy()
+                            .openai_session_binding_ttl(),
+                    )
+                    .await
+                    .map_err(map_selection_error)?;
+            }
         }
         let lease = Arc::new(lease);
         match operation {

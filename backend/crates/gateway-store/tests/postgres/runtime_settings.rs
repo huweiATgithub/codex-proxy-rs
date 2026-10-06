@@ -22,6 +22,7 @@ fn settings_with_margin(refresh_margin_seconds: u64) -> RuntimeSettingsUpdate {
         max_waiting_per_account: 0,
         concurrency_wait_timeout_seconds: 30,
         openai_guardian_reserved_concurrency: 0,
+        openai_session_binding_ttl_hours: None,
         responses_max_decompressed_body_bytes: 64 * 1024 * 1024,
         smart_scheduling: gateway_core::account::SmartSchedulingConfig::default(),
         rotation_strategy: "smart".to_owned(),
@@ -51,6 +52,116 @@ fn settings_with_margin(refresh_margin_seconds: u64) -> RuntimeSettingsUpdate {
 fn runtime_settings_keep_account_rotation_global() {
     let settings = settings_with_margin(3_600);
     assert!(settings.validate().is_ok());
+}
+
+#[test]
+fn runtime_settings_reject_out_of_range_session_binding_ttl() {
+    for hours in [0, 721, u32::MAX] {
+        let settings = RuntimeSettingsUpdate {
+            openai_session_binding_ttl_hours: Some(hours),
+            ..settings_with_margin(3600)
+        };
+        assert!(settings.validate().is_err());
+    }
+    for hours in [1, 24, 168, 720] {
+        let settings = RuntimeSettingsUpdate {
+            openai_session_binding_ttl_hours: Some(hours),
+            ..settings_with_margin(3600)
+        };
+        settings.validate().unwrap();
+    }
+    settings_with_margin(3600).validate().unwrap();
+}
+
+#[tokio::test]
+async fn session_binding_ttl_persists_in_snapshots_and_audits_without_legacy_reset() {
+    use gateway_store::postgres::{
+        AdminAuditActorKind, AdminAuditEvent, ControlPlaneReplacement, ControlPlaneRepository,
+        PgControlPlaneRepository, PgRuntimeSnapshotRepository, RuntimeSnapshotRepository,
+    };
+    let Some(database) = TestDatabase::create("session_binding_ttl").await else {
+        return;
+    };
+    let repository = PgRuntimeSettingsRepository::new(database.pool.clone());
+    let before = repository.load_runtime_settings().await.unwrap();
+    assert_eq!(before.openai_session_binding_ttl_hours, 24);
+    let mut settings = settings_with_margin(3600);
+    settings.openai_session_binding_ttl_hours = Some(168);
+    let saved = PgControlPlaneRepository::new(database.pool.clone())
+        .replace_control_plane(ControlPlaneReplacement {
+            expected_revision: before.config_revision,
+            settings,
+            audit: AdminAuditEvent {
+                id: "session-binding-ttl".into(),
+                actor_kind: AdminAuditActorKind::System,
+                actor_admin_user_id: None,
+                actor_ref: "system".into(),
+                admin_request_id: Some("session-binding-ttl".into()),
+                action: "settings.replace".into(),
+                entity_kind: "runtime_settings".into(),
+                entity_ref: "1".into(),
+                config_revision: None,
+                changed_fields: vec!["openai_session_binding_ttl_hours".into()],
+                created_at: Utc::now(),
+            },
+        })
+        .await
+        .unwrap()
+        .settings;
+    assert_eq!(saved.openai_session_binding_ttl_hours, 168);
+    assert_eq!(
+        saved.config_revision.get(),
+        before.config_revision.get() + 1
+    );
+    let reloaded = PgRuntimeSettingsRepository::new(database.pool.clone())
+        .load_runtime_settings()
+        .await
+        .unwrap();
+    assert_eq!(reloaded, saved);
+    let snapshot = PgRuntimeSnapshotRepository::new(database.pool.clone())
+        .load_runtime_snapshot()
+        .await
+        .unwrap();
+    assert_eq!(snapshot.settings.openai_session_binding_ttl_hours, 168);
+    assert_eq!(snapshot.config_revision, saved.config_revision);
+    let (fields, revision): (Vec<String>, i64) = sqlx::query_as(
+        "select changed_fields, config_revision from admin_audit_events where id = 'session-binding-ttl'",
+    )
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(fields, vec!["openai_session_binding_ttl_hours"]);
+    assert_eq!(
+        u64::try_from(revision).unwrap(),
+        saved.config_revision.get()
+    );
+
+    repository
+        .update_runtime_settings(settings_with_margin(1800))
+        .await
+        .unwrap();
+    let legacy_saved = repository.load_runtime_settings().await.unwrap();
+    assert_eq!(legacy_saved.openai_session_binding_ttl_hours, 168);
+    assert_eq!(legacy_saved.refresh_margin_seconds, 1800);
+    for hours in [0, 721] {
+        let mut invalid = settings_with_margin(3600);
+        invalid.openai_session_binding_ttl_hours = Some(hours);
+        assert!(repository.update_runtime_settings(invalid).await.is_err());
+        assert!(
+            sqlx::query(
+                "update runtime_settings set openai_session_binding_ttl_hours = $1 where id = 1"
+            )
+            .bind(i64::from(hours))
+            .execute(&database.pool)
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            repository.load_runtime_settings().await.unwrap(),
+            legacy_saved
+        );
+    }
+    database.close().await;
 }
 
 #[tokio::test]
@@ -1048,6 +1159,7 @@ async fn runtime_scheduling_upgrade_preserves_settings_without_a_warmup_table() 
     assert_eq!(settings.account_warmup_schedule_time, "08:00,13:00");
     assert_eq!(settings.account_warmup_model.as_deref(), Some("test-model"));
     assert_eq!(settings.openai_guardian_reserved_concurrency, 0);
+    assert_eq!(settings.openai_session_binding_ttl_hours, 24);
     database.close().await;
 }
 

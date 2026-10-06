@@ -320,7 +320,14 @@ impl CodexProvider {
         );
         if !context.is_diagnostic_required_account() {
             self.selector
-                .validate_translated_selection(&mut lease, session_affinity.as_ref(), None)
+                .validate_translated_selection(
+                    &mut lease,
+                    session_affinity.as_ref(),
+                    None,
+                    context
+                        .account_selection_policy()
+                        .openai_session_binding_ttl(),
+                )
                 .await
                 .map_err(map_selection_error)?;
         }

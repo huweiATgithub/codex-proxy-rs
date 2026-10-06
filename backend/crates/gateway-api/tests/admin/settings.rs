@@ -53,6 +53,7 @@ fn update_body() -> Value {
         "maxWaitingPerKey": 0,
         "maxWaitingPerAccount": 0,
         "openaiGuardianReservedConcurrency": 0,
+        "openaiSessionBindingTtlHours": 24,
         "concurrencyWaitTimeoutSeconds": 30,
         "responsesMaxDecompressedBodyBytes": 67108864,
         "rotationStrategy": "round_robin",
@@ -165,6 +166,87 @@ fn settings_request_accepts_unlimited_default_account_concurrency() {
 }
 
 #[test]
+fn session_binding_ttl_request_accepts_hours_and_rejects_invalid_values() {
+    for hours in [1, 24, 168, 720] {
+        let mut body = update_body();
+        body["openaiSessionBindingTtlHours"] = json!(hours);
+        let request: UpdateRuntimeSettingsRequest = serde_json::from_value(body).unwrap();
+        request.validate().unwrap();
+        assert_eq!(request.openai_session_binding_ttl_hours, Some(hours));
+    }
+    for hours in [0, 721, u32::MAX] {
+        let mut body = update_body();
+        body["openaiSessionBindingTtlHours"] = json!(hours);
+        let request: UpdateRuntimeSettingsRequest = serde_json::from_value(body).unwrap();
+        assert_eq!(
+            request.validate().unwrap_err().field(),
+            "openaiSessionBindingTtlHours"
+        );
+    }
+    for value in [json!(null), json!(-1), json!(1.5), json!("168")] {
+        let mut body = update_body();
+        body["openaiSessionBindingTtlHours"] = value;
+        assert!(serde_json::from_value::<UpdateRuntimeSettingsRequest>(body).is_err());
+    }
+}
+
+#[tokio::test]
+async fn session_binding_ttl_updates_preserve_values_for_older_clients() {
+    let fixture = AdminTestFixture::new().await;
+    fixture.auth.insert_session("valid-session");
+    let mut body = update_body();
+    body["openaiSessionBindingTtlHours"] = json!(168);
+    let response = app(fixture.state())
+        .oneshot(request(
+            Method::POST,
+            "/api/admin/settings/update",
+            Some(body.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let saved = response_json(response).await["data"].clone();
+    assert_eq!(saved["openaiSessionBindingTtlHours"], json!(168));
+
+    body["configRevision"] = saved["configRevision"].clone();
+    body["requestIntervalMs"] = json!(30);
+    body.as_object_mut()
+        .unwrap()
+        .remove("openaiSessionBindingTtlHours");
+    let legacy: UpdateRuntimeSettingsRequest = serde_json::from_value(body.clone()).unwrap();
+    assert_eq!(legacy.openai_session_binding_ttl_hours, None);
+    let response = app(fixture.state())
+        .oneshot(request(
+            Method::POST,
+            "/api/admin/settings/update",
+            Some(body.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let saved = response_json(response).await["data"].clone();
+    assert_eq!(saved["openaiSessionBindingTtlHours"], json!(168));
+    assert_eq!(saved["requestIntervalMs"], json!(30));
+
+    body["configRevision"] = saved["configRevision"].clone();
+    body["openaiSessionBindingTtlHours"] = json!(0);
+    let response = app(fixture.state())
+        .oneshot(request(
+            Method::POST,
+            "/api/admin/settings/update",
+            Some(body),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let response = app(fixture.state())
+        .oneshot(request(Method::GET, "/api/admin/settings", None))
+        .await
+        .unwrap();
+    assert_eq!(response_json(response).await["data"], saved);
+}
+
+#[test]
 fn settings_request_requires_model_when_warmup_is_enabled() {
     let mut body = update_body();
     body["accountWarmupEnabled"] = json!(true);
@@ -224,6 +306,7 @@ fn settings_response_should_cover_the_full_runtime_settings_contract() {
         max_waiting_per_account: 0,
         concurrency_wait_timeout_seconds: 30,
         openai_guardian_reserved_concurrency: 0,
+        openai_session_binding_ttl_hours: 24,
         responses_max_decompressed_body_bytes: 64 * 1024 * 1024,
         smart_scheduling: gateway_core::account::SmartSchedulingConfig::default(),
         rotation_strategy: RotationStrategy::RoundRobin,
@@ -273,6 +356,7 @@ fn settings_response_should_cover_the_full_runtime_settings_contract() {
             "maxWaitingPerKey": 0,
             "maxWaitingPerAccount": 0,
             "openaiGuardianReservedConcurrency": 0,
+        "openaiSessionBindingTtlHours": 24,
             "concurrencyWaitTimeoutSeconds": 30,
             "responsesMaxDecompressedBodyBytes": 67108864,
             "rotationStrategy": "round_robin",
@@ -343,6 +427,7 @@ fn settings_request_and_response_fields_should_stay_in_lockstep() {
         max_waiting_per_account: 0,
         concurrency_wait_timeout_seconds: 30,
         openai_guardian_reserved_concurrency: 0,
+        openai_session_binding_ttl_hours: 24,
         responses_max_decompressed_body_bytes: 64 * 1024 * 1024,
         smart_scheduling: request.smart_scheduling,
         rotation_strategy: RotationStrategy::parse(&request.rotation_strategy)

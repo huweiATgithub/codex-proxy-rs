@@ -46,6 +46,7 @@ export interface RuntimeSettings {
   concurrencyWaitTimeoutSeconds: number
   responsesMaxDecompressedBodyBytes: number
   rotationStrategy: RotationStrategy
+  openaiSessionBindingTtlHours: number
   minCodexDesktopVersion: string | null
   minCodexCliVersion: string | null
   usageRetentionDays: number

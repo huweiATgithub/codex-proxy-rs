@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use super::{InvalidSettings, SettingsValues};
+use super::{InvalidSettings, SettingsValues, parse_openai_session_binding_ttl_hours};
 use crate::{
     account::{AccountConcurrency, AccountSelectionPolicy, RotationStrategy},
     concurrency::ConcurrencyQueuePolicy,
@@ -58,6 +58,9 @@ impl CompiledSettings {
             Duration::from_millis(settings.request_interval_ms),
         )
         .with_openai_guardian_reserved_concurrency(settings.openai_guardian_reserved_concurrency)
+        .with_openai_session_binding_ttl(parse_openai_session_binding_ttl_hours(
+            settings.openai_session_binding_ttl_hours,
+        )?)
         .with_smart_scheduling(settings.smart_scheduling)
         .with_queue(ConcurrencyQueuePolicy {
             max_waiting: settings.max_waiting_per_account,

@@ -39,6 +39,8 @@ pub struct RuntimeSettings {
     pub max_waiting_per_account: u32,
     pub concurrency_wait_timeout_seconds: u32,
     pub openai_guardian_reserved_concurrency: u32,
+    #[serde(default = "default_openai_session_binding_ttl_hours")]
+    pub openai_session_binding_ttl_hours: u32,
     pub responses_max_decompressed_body_bytes: u64,
     pub smart_scheduling: gateway_core::account::SmartSchedulingConfig,
     pub rotation_strategy: RotationStrategy,
@@ -60,6 +62,10 @@ pub struct RuntimeSettings {
     pub updated_at: DateTime<Utc>,
 }
 
+const fn default_openai_session_binding_ttl_hours() -> u32 {
+    gateway_core::settings::DEFAULT_OPENAI_SESSION_BINDING_TTL_HOURS
+}
+
 /// 原子替换运行设置的命令
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -79,6 +85,9 @@ pub struct ReplaceRuntimeSettings {
     pub max_waiting_per_account: u32,
     pub concurrency_wait_timeout_seconds: u32,
     pub openai_guardian_reserved_concurrency: u32,
+    /// 缺省保留持久值，允许旧客户端继续保存其他运行设置
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openai_session_binding_ttl_hours: Option<u32>,
     pub responses_max_decompressed_body_bytes: u64,
     pub smart_scheduling: gateway_core::account::SmartSchedulingConfig,
     pub rotation_strategy: RotationStrategy,
@@ -185,6 +194,7 @@ impl From<RuntimeSettings> for ReplaceRuntimeSettings {
             max_waiting_per_account: settings.max_waiting_per_account,
             concurrency_wait_timeout_seconds: settings.concurrency_wait_timeout_seconds,
             openai_guardian_reserved_concurrency: settings.openai_guardian_reserved_concurrency,
+            openai_session_binding_ttl_hours: Some(settings.openai_session_binding_ttl_hours),
             responses_max_decompressed_body_bytes: settings.responses_max_decompressed_body_bytes,
             smart_scheduling: settings.smart_scheduling,
             rotation_strategy: settings.rotation_strategy,

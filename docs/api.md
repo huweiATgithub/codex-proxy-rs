@@ -1290,6 +1290,7 @@ maxConcurrentPerAccount
 maxWaitingPerKey
 maxWaitingPerAccount
 openaiGuardianReservedConcurrency
+openaiSessionBindingTtlHours
 concurrencyWaitTimeoutSeconds
 responsesMaxDecompressedBodyBytes
 requestIntervalMs
@@ -1344,6 +1345,11 @@ Guardian 以 `subagent_kind` 或 `client_metadata.x-openai-subagent` 值 `guardi
 开启账号排队后，Guardian 排在同账号已有 Guardian 之后、全部普通等待者之前，不受单账号排队上限约束，
 仍受总等待容量与等待时限约束。不限并发的账号和关闭排队时的其余行为不变。
 设置更新请求须包含该字段
+
+`openaiSessionBindingTtlHours` 控制 OpenAI 会话账号绑定的滑动有效期，单位小时，默认 24，允许 1～720 的整数；
+7 天填写 168。更新时省略该字段会保留当前值，超出范围返回 400，`null` 或类型不符返回 422。
+保存后，后续请求在发送前成功准入时按新值续期，响应完成不续期，不扫描或重写已有 Redis 键。
+Images 的已知轮次关联使用同一有效期，并在相关请求成功准入后续期
 
 `responsesMaxDecompressedBodyBytes` 是压缩 Responses HTTP 请求的解压输出上限，单位字节，默认
 67108864（64 MiB）。必须为正整数，且可表示为进程平台的 `isize`；管理端以整数 MiB 编辑。

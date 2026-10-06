@@ -946,6 +946,76 @@ fn decompression_setting_should_validate_and_remain_frozen_across_publication() 
 }
 
 #[test]
+fn session_binding_ttl_is_frozen_in_plans_and_rebased_for_new_requests() {
+    use gateway_core::account::ProviderAccountId;
+    use gateway_core::runtime::RuntimeSnapshotHandle;
+    use gateway_core::settings::RequestSettings;
+    use std::time::Duration;
+
+    let compile = |version, hours| {
+        let facts = SnapshotFacts::new(
+            revision(version),
+            revision(version),
+            SettingsValues::new(3, 0, "smart", BTreeMap::new(), None, None)
+                .with_openai_session_binding_ttl_hours(hours),
+            Vec::new(),
+            Vec::new(),
+            vec![SnapshotProviderAccountFacts::new(
+                ProviderAccountId::new("acct_session_binding").unwrap(),
+                "alpha",
+            )],
+            Vec::new(),
+        );
+        block_on(
+            RuntimeSnapshotCompiler::new(
+                Arc::new(TestSnapshotStore::new(Ok(facts))),
+                Arc::new(TestCatalog::Unavailable),
+            )
+            .compile(),
+        )
+    };
+    for invalid in [0, 721] {
+        assert!(matches!(
+            compile(1, invalid),
+            Err(RuntimeSnapshotCompileError::InvalidData)
+        ));
+    }
+    let plan = |snapshot: &gateway_core::routing::RuntimeSnapshot| {
+        snapshot
+            .plan(
+                &PublicModelId::new("public-model").unwrap(),
+                &super::operation(),
+                snapshot.all_account_scope(),
+                &Default::default(),
+            )
+            .unwrap()
+    };
+    let handle = RuntimeSnapshotHandle::new(compile(1, 24).unwrap());
+    let request = RequestSettings::new(handle.acquire().unwrap());
+    let frozen_plan = plan(&request.snapshot());
+    handle.publish(compile(2, 168).unwrap());
+    let next_request = request.rebase(handle.acquire().unwrap()).unwrap();
+    assert_eq!(
+        plan(&next_request.snapshot())
+            .account_selection_policy()
+            .openai_session_binding_ttl(),
+        Duration::from_secs(168 * 3_600),
+    );
+    assert_eq!(
+        frozen_plan
+            .account_selection_policy()
+            .openai_session_binding_ttl(),
+        Duration::from_secs(24 * 3_600),
+    );
+    assert_eq!(
+        plan(&request.snapshot())
+            .account_selection_policy()
+            .openai_session_binding_ttl(),
+        Duration::from_secs(24 * 3_600),
+    );
+}
+
+#[test]
 fn fast_mode_merges_only_bound_groups_without_changing_account_scope() {
     use gateway_core::account::ProviderAccountId;
     use gateway_core::routing::AccountGroupId;

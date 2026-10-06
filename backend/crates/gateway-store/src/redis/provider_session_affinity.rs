@@ -14,8 +14,6 @@ use crate::StoreResult;
 
 use super::{namespace, resource_fingerprint};
 
-const MAX_SESSION_AFFINITY_TTL: Duration = Duration::from_secs(24 * 60 * 60);
-
 // 比较完整记录而非账号 ID；冲突时既不改绑定，也不续期
 const COMPARE_AND_BIND_SCRIPT: &str = r#"
 local current = redis.call('GET', KEYS[1])
@@ -194,12 +192,13 @@ impl ProviderSessionAffinityPort for RedisProviderSessionAffinityRepository {
     }
 }
 
-fn session_affinity_ttl_millis(ttl: Duration) -> Result<u64, ProviderStoreError> {
-    if ttl.is_zero() || ttl > MAX_SESSION_AFFINITY_TTL {
+fn session_affinity_ttl_millis(ttl: Duration) -> Result<i64, ProviderStoreError> {
+    let millis = i64::try_from(ttl.as_millis())
+        .map_err(|_| provider_invalid("validate provider session affinity TTL"))?;
+    if millis == 0 {
         return Err(provider_invalid("validate provider session affinity TTL"));
     }
-    u64::try_from(ttl.as_millis())
-        .map_err(|_| provider_invalid("validate provider session affinity TTL"))
+    Ok(millis)
 }
 
 fn provider_unavailable(operation: &'static str) -> ProviderStoreError {

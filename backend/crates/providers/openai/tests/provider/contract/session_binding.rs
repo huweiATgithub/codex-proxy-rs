@@ -1,6 +1,8 @@
 //! 验证最终请求身份、官方图片轮次关联与共享账号迁移
 
 use super::*;
+use crate::support::SessionAffinityOperation;
+use gateway_core::provider_ports::ProviderStoreErrorKind;
 
 #[derive(Debug)]
 struct ChangeSessionHeader;
@@ -95,6 +97,283 @@ fn image_for_turn(kind: ImageRequestKind, turn: &str) -> Operation {
         .unwrap()
         .with_context(Map::from_iter([("image_turn_id".into(), json!(turn))])),
     ))
+}
+
+fn binding_context(
+    request_id: &str,
+    ttl: Duration,
+    middleware: Option<Arc<dyn MiddlewarePlan>>,
+) -> AttemptContext {
+    let request = RequestAttemptContext::new(
+        ModelRequestId::new(request_id).unwrap(),
+        ClientApiKeyId::new("key_openai_contract").unwrap(),
+    );
+    let request = if let Some(plan) = middleware {
+        request.with_middleware(
+            Some(FrozenMiddlewarePlan::new(
+                plan,
+                ExtensionSetReference::new(
+                    ExtensionSetId::new(format!("binding-{request_id}")).unwrap(),
+                    Arc::new(TestExtensionLease),
+                ),
+            )),
+            Arc::from([]),
+            "/v1/images/generations".to_owned(),
+            ClientTransport::HttpSse,
+        )
+    } else {
+        request
+    };
+    AttemptContext::new(
+        request,
+        NonZeroU32::MIN,
+        SystemTime::now() + Duration::from_secs(30),
+        account_policy().with_openai_session_binding_ttl(ttl),
+        AccountAttemptContext::new(BTreeSet::new(), None, None)
+            .with_account_scope(contract_account_scope()),
+        None,
+        CancellationToken::new(),
+    )
+}
+
+#[tokio::test]
+async fn binding_and_image_alias_renew_with_each_requests_ttl_before_send_only() {
+    let store = Arc::new(MemoryAccountStore::default());
+    create_account(&store, "acct_subagent_a").await;
+    let affinity = Arc::new(MemorySessionAffinity::default());
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/codex/responses"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(CAPTURE_COMPLETED_SSE, "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    for endpoint in ["/codex/images/generations", "/codex/images/edits"] {
+        Mock::given(method("POST"))
+            .and(path(endpoint))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "created": 1787212800, "data": [{"b64_json": "AAEC"}]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let provider = provider_with_affinity_and_base_url(&store, affinity.clone(), server.uri());
+    let cases = [
+        (
+            turn_request("root", "known-turn"),
+            Duration::from_secs(24 * 60 * 60),
+        ),
+        (
+            image_for_turn(ImageRequestKind::Generation, "known-turn"),
+            Duration::from_secs(7 * 24 * 60 * 60),
+        ),
+        (
+            image_for_turn(ImageRequestKind::Edit, "known-turn"),
+            Duration::from_secs(60 * 60),
+        ),
+    ];
+    let mut expected = Vec::new();
+    for (index, (operation, ttl)) in cases.into_iter().enumerate() {
+        let request = if matches!(operation, Operation::Generate(_)) {
+            planned_request("openai", operation)
+        } else {
+            planned_provider_endpoint_request("openai", operation)
+        };
+        let mut stream = provider
+            .clone()
+            .execute(
+                request,
+                binding_context(&format!("req_binding_ttl_{index}"), ttl, None),
+            )
+            .await
+            .unwrap();
+        expected.push(ttl);
+        assert_eq!(affinity.renewal_ttls(), expected);
+        assert_eq!(affinity.alias_ttls(), expected);
+        assert_eq!(server.received_requests().await.unwrap().len(), index);
+        while let Some(event) = stream.next().await {
+            event.unwrap();
+        }
+        assert_eq!(
+            affinity.renewal_ttls(),
+            expected,
+            "completion must not renew binding"
+        );
+        assert_eq!(
+            affinity.alias_ttls(),
+            expected,
+            "completion must not renew turn alias"
+        );
+    }
+}
+
+#[derive(Debug)]
+struct ImageTurnHeaders;
+
+impl MiddlewarePlan for ImageTurnHeaders {
+    fn handle(
+        &self,
+        _context: MiddlewareContext,
+        request: MiddlewareRequest,
+        next: MiddlewareNext,
+    ) -> BoxFuture<'static, Result<MiddlewareResponse, MiddlewareError>> {
+        Box::pin(async move {
+            let (protocol, mut headers, body) = request.into_parts();
+            headers.push(MiddlewareHeader::new(
+                "x-codex-image-turn-id",
+                Bytes::from_static(b"known-turn"),
+            ));
+            headers.push(MiddlewareHeader::new(
+                "x-codex-turn-metadata",
+                Bytes::from_static(br#"{"session_id":"root","thread_id":"child"}"#),
+            ));
+            next.run(MiddlewareRequest::new(protocol, headers, body))
+                .await
+        })
+    }
+}
+
+#[tokio::test]
+async fn image_alias_renewal_uses_final_headers_and_preserves_original_permissions() {
+    let store = Arc::new(MemoryAccountStore::default());
+    create_account(&store, "acct_subagent_a").await;
+    let affinity = Arc::new(MemorySessionAffinity::default());
+    let server = MockServer::start().await;
+    let provider = provider_with_affinity_and_base_url(&store, affinity.clone(), server.uri());
+    drop(
+        provider
+            .clone()
+            .execute(
+                planned_request("openai", turn_request("root", "known-turn")),
+                context("req_seed_final_turn", CancellationToken::new()),
+            )
+            .await
+            .unwrap(),
+    );
+    let ttl = Duration::from_secs(7 * 24 * 60 * 60);
+    drop(
+        provider
+            .execute(
+                planned_provider_endpoint_request(
+                    "openai",
+                    image_for_turn(ImageRequestKind::Generation, "unknown-turn"),
+                ),
+                binding_context("req_final_turn", ttl, Some(Arc::new(ImageTurnHeaders))),
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        affinity.renewal_ttls(),
+        vec![Duration::from_secs(24 * 60 * 60), ttl]
+    );
+    assert_eq!(
+        affinity.alias_ttls(),
+        vec![Duration::from_secs(24 * 60 * 60), ttl]
+    );
+    let aliases = affinity.alias_records();
+    assert_eq!(
+        aliases.len(),
+        1,
+        "unknown initial turn must not be inferred or stored"
+    );
+    assert!(
+        !aliases[0].follow_only,
+        "per-request child restrictions must not rewrite root turn permissions"
+    );
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn session_binding_store_failures_never_send_without_admission() {
+    for operation in [
+        SessionAffinityOperation::Load,
+        SessionAffinityOperation::Admit,
+        SessionAffinityOperation::BindAlias,
+    ] {
+        for kind in [
+            ProviderStoreErrorKind::Unavailable,
+            ProviderStoreErrorKind::InvalidData,
+        ] {
+            let store = Arc::new(MemoryAccountStore::default());
+            create_account(&store, "acct_subagent_a").await;
+            let affinity = Arc::new(MemorySessionAffinity::default());
+            affinity.fail_operation(operation, kind);
+            let server = MockServer::start().await;
+            let provider =
+                provider_with_affinity_and_base_url(&store, affinity.clone(), server.uri());
+            let error = provider
+                .execute(
+                    planned_request("openai", turn_request("root", "known-turn")),
+                    binding_context(
+                        "req_binding_failure",
+                        Duration::from_secs(7 * 24 * 60 * 60),
+                        None,
+                    ),
+                )
+                .await
+                .err()
+                .expect("storage error must fail closed");
+            assert!(error.retry_is_prohibited());
+            assert!(affinity.alias_ttls().is_empty());
+            assert!(server.received_requests().await.unwrap().is_empty());
+        }
+    }
+}
+
+#[tokio::test]
+async fn image_alias_store_failures_do_not_become_unknown_turns_or_renew_on_lookup() {
+    for operation in [
+        SessionAffinityOperation::LoadAlias,
+        SessionAffinityOperation::BindAlias,
+    ] {
+        for kind in [
+            ProviderStoreErrorKind::Unavailable,
+            ProviderStoreErrorKind::InvalidData,
+        ] {
+            let store = Arc::new(MemoryAccountStore::default());
+            create_account(&store, "acct_subagent_a").await;
+            let affinity = Arc::new(MemorySessionAffinity::default());
+            let server = MockServer::start().await;
+            let provider =
+                provider_with_affinity_and_base_url(&store, affinity.clone(), server.uri());
+            drop(
+                provider
+                    .clone()
+                    .execute(
+                        planned_request("openai", turn_request("root", "known-turn")),
+                        context("req_seed_failed_image", CancellationToken::new()),
+                    )
+                    .await
+                    .unwrap(),
+            );
+            affinity.fail_operation(operation, kind);
+            let error = provider
+                .execute(
+                    planned_provider_endpoint_request(
+                        "openai",
+                        image_for_turn(ImageRequestKind::Generation, "known-turn"),
+                    ),
+                    binding_context(
+                        "req_failed_image",
+                        Duration::from_secs(7 * 24 * 60 * 60),
+                        None,
+                    ),
+                )
+                .await
+                .err()
+                .expect("alias storage error must fail closed");
+            assert!(error.retry_is_prohibited());
+            assert_eq!(
+                affinity.alias_ttls(),
+                vec![Duration::from_secs(24 * 60 * 60)]
+            );
+            assert!(server.received_requests().await.unwrap().is_empty());
+        }
+    }
 }
 
 #[tokio::test]
@@ -386,6 +665,7 @@ async fn descendant_images_wait_for_the_owner_even_when_ordinary_queues_are_disa
         .unwrap()
         .insert(ProviderAccountId::new("acct_subagent_a").unwrap());
     for kind in [ImageRequestKind::Generation, ImageRequestKind::Edit] {
+        let prior_renewals = affinity.alias_ttls().len();
         let mut pending = Box::pin(provider.clone().execute(
             planned_provider_endpoint_request("openai", image_for_turn(kind, "child-turn")),
             context("req_child_image_wait", CancellationToken::new()),
@@ -394,6 +674,11 @@ async fn descendant_images_wait_for_the_owner_even_when_ordinary_queues_are_disa
             timeout(Duration::from_millis(150), pending.as_mut())
                 .await
                 .is_err()
+        );
+        assert_eq!(
+            affinity.alias_ttls().len(),
+            prior_renewals,
+            "waiting must not renew the turn alias"
         );
         assert!(
             leases
@@ -412,6 +697,11 @@ async fn descendant_images_wait_for_the_owner_even_when_ordinary_queues_are_disa
         assert_eq!(
             stream.metadata().provider_account_id().as_str(),
             "acct_subagent_a"
+        );
+        assert_eq!(
+            affinity.alias_ttls().len(),
+            prior_renewals + 1,
+            "successful admission must renew the turn alias"
         );
         drop(stream);
         leases

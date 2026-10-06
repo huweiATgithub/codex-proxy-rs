@@ -55,6 +55,7 @@ pub struct RuntimeSettingsView {
     pub max_waiting_per_account: u32,
     pub concurrency_wait_timeout_seconds: u32,
     pub openai_guardian_reserved_concurrency: u32,
+    pub openai_session_binding_ttl_hours: u32,
     pub responses_max_decompressed_body_bytes: u64,
     pub smart_scheduling: gateway_core::account::SmartSchedulingConfig,
     pub rotation_strategy: String,
@@ -101,6 +102,9 @@ pub struct UpdateRuntimeSettingsRequest {
     pub max_waiting_per_account: u32,
     pub concurrency_wait_timeout_seconds: u32,
     pub openai_guardian_reserved_concurrency: u32,
+    /// 缺字段保留现值；显式 null 不是合法 TTL
+    #[serde(default, deserialize_with = "deserialize_session_binding_ttl_hours")]
+    pub openai_session_binding_ttl_hours: Option<u32>,
     pub responses_max_decompressed_body_bytes: u64,
     pub smart_scheduling: gateway_core::account::SmartSchedulingConfig,
     pub rotation_strategy: String,
@@ -121,6 +125,13 @@ pub struct UpdateRuntimeSettingsRequest {
     pub account_warmup_model: Option<String>,
 }
 
+fn deserialize_session_binding_ttl_hours<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    u32::deserialize(deserializer).map(Some)
+}
+
 impl UpdateRuntimeSettingsRequest {
     /// 校验公共运行参数
     pub fn validate(&self) -> Result<(), WireValidationError> {
@@ -128,6 +139,10 @@ impl UpdateRuntimeSettingsRequest {
             .validate()
             .map_err(|_| WireValidationError::new("requestLocation"))?;
         validate_model_mappings(&self.model_mappings)?;
+        if let Some(hours) = self.openai_session_binding_ttl_hours {
+            gateway_core::settings::parse_openai_session_binding_ttl_hours(hours)
+                .map_err(|_| WireValidationError::new("openaiSessionBindingTtlHours"))?;
+        }
         for (value, field) in [
             (self.max_waiting_per_key, "maxWaitingPerKey"),
             (self.max_waiting_per_account, "maxWaitingPerAccount"),
@@ -237,6 +252,7 @@ impl UpdateRuntimeSettingsRequest {
             max_waiting_per_account: self.max_waiting_per_account,
             concurrency_wait_timeout_seconds: self.concurrency_wait_timeout_seconds,
             openai_guardian_reserved_concurrency: self.openai_guardian_reserved_concurrency,
+            openai_session_binding_ttl_hours: self.openai_session_binding_ttl_hours,
             responses_max_decompressed_body_bytes: self.responses_max_decompressed_body_bytes,
             smart_scheduling: self.smart_scheduling,
             rotation_strategy: RotationStrategy::parse(&self.rotation_strategy)
@@ -287,6 +303,7 @@ impl From<(RuntimeSettings, crate::time::TimePresenter)> for RuntimeSettingsView
             max_waiting_per_account: settings.max_waiting_per_account,
             concurrency_wait_timeout_seconds: settings.concurrency_wait_timeout_seconds,
             openai_guardian_reserved_concurrency: settings.openai_guardian_reserved_concurrency,
+            openai_session_binding_ttl_hours: settings.openai_session_binding_ttl_hours,
             responses_max_decompressed_body_bytes: settings.responses_max_decompressed_body_bytes,
             smart_scheduling: settings.smart_scheduling,
             smart_scheduling_defaults: gateway_core::account::SmartSchedulingConfig::default(),

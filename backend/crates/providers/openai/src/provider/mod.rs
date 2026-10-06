@@ -718,6 +718,9 @@ impl CodexProvider {
                     &mut lease,
                     session_affinity.as_ref(),
                     cyber_policy_session_key.as_ref(),
+                    context
+                        .account_selection_policy()
+                        .openai_session_binding_ttl(),
                 )
                 .await
                 .map_err(map_selection_error)?;
@@ -732,7 +735,13 @@ impl CodexProvider {
             .and_then(|turn| derive_turn_alias(&turn, context.client_api_key_ref()))
         {
             self.selector
-                .remember_turn(&turn, affinity)
+                .remember_turn(
+                    &turn,
+                    &affinity.to_alias(),
+                    context
+                        .account_selection_policy()
+                        .openai_session_binding_ttl(),
+                )
                 .await
                 .map_err(map_selection_error)?;
         }

@@ -1,8 +1,25 @@
 //! 请求可覆盖的运行设置值，以及共享配置的不可变构造接口
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use crate::identity::ProviderKind;
+
+use super::{DEFAULT_OPENAI_SESSION_BINDING_TTL_HOURS, InvalidSettings};
+
+/// 将 OpenAI 会话绑定有效期解析为请求内使用的持续时长
+///
+/// # Errors
+/// 小时数不在 1 至 720 范围内时返回无效设置
+pub fn parse_openai_session_binding_ttl_hours(hours: u32) -> Result<Duration, InvalidSettings> {
+    if !(1..=720).contains(&hours) {
+        return Err(InvalidSettings);
+    }
+    Ok(Duration::from_secs(u64::from(hours) * 3_600))
+}
+
+const fn default_openai_session_binding_ttl_hours() -> u32 {
+    DEFAULT_OPENAI_SESSION_BINDING_TTL_HOURS
+}
 
 /// 请求可覆盖的运行设置事实；编译产物不能反向改写本值
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -17,6 +34,8 @@ pub struct SettingsValues {
     pub(crate) max_waiting_per_account: u32,
     pub(crate) concurrency_wait_timeout_seconds: u32,
     pub(crate) openai_guardian_reserved_concurrency: u32,
+    #[serde(default = "default_openai_session_binding_ttl_hours")]
+    pub(crate) openai_session_binding_ttl_hours: u32,
     pub(crate) responses_max_decompressed_body_bytes: u64,
     pub(crate) request_interval_ms: u64,
     pub(crate) smart_scheduling: crate::account::SmartSchedulingConfig,
@@ -27,6 +46,12 @@ pub struct SettingsValues {
 }
 
 impl SettingsValues {
+    #[must_use]
+    pub const fn with_openai_session_binding_ttl_hours(mut self, hours: u32) -> Self {
+        self.openai_session_binding_ttl_hours = hours;
+        self
+    }
+
     #[must_use]
     pub const fn with_openai_guardian_reserved_concurrency(mut self, reserved: u32) -> Self {
         self.openai_guardian_reserved_concurrency = reserved;
@@ -114,6 +139,7 @@ impl SettingsValues {
             max_waiting_per_account: 0,
             concurrency_wait_timeout_seconds: 30,
             openai_guardian_reserved_concurrency: 0,
+            openai_session_binding_ttl_hours: DEFAULT_OPENAI_SESSION_BINDING_TTL_HOURS,
             responses_max_decompressed_body_bytes: 64 * 1024 * 1024,
             request_interval_ms,
             smart_scheduling: crate::account::SmartSchedulingConfig::default(),

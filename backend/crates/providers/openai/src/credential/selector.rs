@@ -16,15 +16,15 @@ use gateway_core::engine::{AttemptContext, ContinuationAttempt, policy::AccountP
 use gateway_core::provider_ports::{
     ProviderLeaseAcquisition, ProviderLeaseGuard, ProviderLeasePort, ProviderLeaseRequest,
     ProviderSchedulingLeaseRequest, ProviderSessionAffinityKey, ProviderSessionAffinityPort,
-    ProviderSessionBinding, ProviderSessionExclusionPort, ProviderSessionExclusions,
-    ProviderStoreError,
+    ProviderSessionAlias, ProviderSessionBinding, ProviderSessionExclusionPort,
+    ProviderSessionExclusions, ProviderStoreError,
 };
 use gateway_core::routing::ProviderKind;
 use secrecy::ExposeSecret;
 use thiserror::Error;
 use url::Url;
 
-use super::affinity::{CODEX_ROOT_SESSION_TTL, CodexSessionAffinity};
+use super::affinity::CodexSessionAffinity;
 use super::cookie::CodexCookiePolicy;
 use super::quota::CodexCredentialQuotaService;
 use super::refresh::refresh_recovery_deadline;
@@ -340,6 +340,7 @@ impl CodexCredentialSelector {
         lease: &mut CodexCredentialLease,
         session_affinity: Option<&CodexSessionAffinity>,
         cyber_policy_session_key: Option<&ProviderSessionAffinityKey>,
+        session_binding_ttl: Duration,
     ) -> Result<(), CredentialSelectionError> {
         let selected_account = lease.account.id().clone();
         if let Some(affinity) = session_affinity
@@ -351,7 +352,12 @@ impl CodexCredentialSelector {
                     .as_ref()
                     .is_some_and(|binding| binding.account_id() != &selected_account)
                 || !self
-                    .admit_session(affinity.key(), current.as_ref(), &selected_account)
+                    .admit_session(
+                        affinity.key(),
+                        current.as_ref(),
+                        &selected_account,
+                        session_binding_ttl,
+                    )
                     .await?
             {
                 return Err(CredentialSelectionError::SessionBound(Box::new(
@@ -881,7 +887,15 @@ impl CodexCredentialSelector {
                     ProviderLeaseAcquisition::Acquired(guard) => {
                         if let Some(key) = binding_key
                             && !self
-                                .admit_session(key, binding.as_ref(), account.id())
+                                .admit_session(
+                                    key,
+                                    binding.as_ref(),
+                                    account.id(),
+                                    request
+                                        .attempt
+                                        .account_selection_policy()
+                                        .openai_session_binding_ttl(),
+                                )
                                 .await?
                         {
                             drop(guard);
@@ -956,18 +970,16 @@ impl CodexCredentialSelector {
     pub(crate) async fn remember_turn(
         &self,
         turn: &ProviderSessionAffinityKey,
-        session: &CodexSessionAffinity,
+        session: &ProviderSessionAlias,
+        session_binding_ttl: Duration,
     ) -> Result<(), CredentialSelectionError> {
         let applied = tokio::time::timeout(
             SESSION_AFFINITY_TIMEOUT,
             self.session_affinity.bind_alias(
                 &self.provider_kind,
                 turn,
-                &gateway_core::provider_ports::ProviderSessionAlias {
-                    session_key: session.key().clone(),
-                    follow_only: session.follow_only(),
-                },
-                CODEX_ROOT_SESSION_TTL,
+                session,
+                session_binding_ttl,
             ),
         )
         .await
@@ -1013,6 +1025,7 @@ impl CodexCredentialSelector {
         key: &ProviderSessionAffinityKey,
         expected: Option<&ProviderSessionBinding>,
         account: &ProviderAccountId,
+        session_binding_ttl: Duration,
     ) -> Result<bool, CredentialSelectionError> {
         tokio::time::timeout(
             SESSION_AFFINITY_TIMEOUT,
@@ -1021,7 +1034,7 @@ impl CodexCredentialSelector {
                 key,
                 expected,
                 account,
-                CODEX_ROOT_SESSION_TTL,
+                session_binding_ttl,
             ),
         )
         .await

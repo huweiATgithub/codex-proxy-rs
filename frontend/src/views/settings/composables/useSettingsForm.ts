@@ -39,6 +39,7 @@ export function useSettingsForm() {
     responsesMaxDecompressedBodyMiB: null as number | null,
 
     rotationStrategy: '' as RotationStrategy | '',
+    openaiSessionBindingTtlHours: null as number | null,
     minCodexDesktopVersion: '',
     minCodexCliVersion: '',
     usageRetentionDays: 31,
@@ -73,7 +74,7 @@ export function useSettingsForm() {
     mappings.value = initial.mappings
   }
 
-  function numericModel(key: 'refreshMarginSeconds' | 'refreshConcurrency' | 'maxConcurrentPerAccount' | 'openaiGuardianReservedConcurrency' | 'requestIntervalMs' | 'maxWaitingPerKey' | 'maxWaitingPerAccount' | 'concurrencyWaitTimeoutSeconds' | 'responsesMaxDecompressedBodyMiB' | 'accountAutoFreezeThreshold' | 'accountAutoFreezeWindowSeconds' | 'accountAutoFreezeDurationSeconds') {
+  function numericModel(key: 'refreshMarginSeconds' | 'refreshConcurrency' | 'maxConcurrentPerAccount' | 'openaiGuardianReservedConcurrency' | 'requestIntervalMs' | 'maxWaitingPerKey' | 'maxWaitingPerAccount' | 'concurrencyWaitTimeoutSeconds' | 'responsesMaxDecompressedBodyMiB' | 'openaiSessionBindingTtlHours' | 'accountAutoFreezeThreshold' | 'accountAutoFreezeWindowSeconds' | 'accountAutoFreezeDurationSeconds') {
     return computed({
       get: () => (form[key] === null ? '' : String(form[key])),
       set: (value: string) => {
@@ -95,6 +96,7 @@ export function useSettingsForm() {
   const maxWaitingPerKeyValue = numericModel('maxWaitingPerKey')
   const maxWaitingPerAccountValue = numericModel('maxWaitingPerAccount')
   const responsesMaxDecompressedBodyMiBValue = numericModel('responsesMaxDecompressedBodyMiB')
+  const openaiSessionBindingTtlHoursValue = numericModel('openaiSessionBindingTtlHours')
   const concurrencyWaitTimeoutSecondsValue = numericModel('concurrencyWaitTimeoutSeconds')
   const accountAutoFreezeThresholdValue = numericModel('accountAutoFreezeThreshold')
   const accountAutoFreezeWindowSecondsValue = numericModel('accountAutoFreezeWindowSeconds')
@@ -125,6 +127,7 @@ export function useSettingsForm() {
     form.smartScheduling = { ...data.smartScheduling }
     smartSchedulingDefaults.value = { ...data.smartSchedulingDefaults }
     form.rotationStrategy = data.rotationStrategy
+    form.openaiSessionBindingTtlHours = data.openaiSessionBindingTtlHours
     form.minCodexDesktopVersion = data.minCodexDesktopVersion ?? ''
     form.providerRequestProfiles = cloneDeep(data.providerRequestProfiles)
     form.minCodexCliVersion = data.minCodexCliVersion ?? ''
@@ -201,9 +204,13 @@ export function useSettingsForm() {
     const savedSettings = saved.value
     if (saving.value || loading.value || !savedSettings)
       return
-    const { refreshMarginSeconds, refreshConcurrency, maxConcurrentPerAccount, openaiGuardianReservedConcurrency, requestIntervalMs, rotationStrategy, maxWaitingPerKey, maxWaitingPerAccount, concurrencyWaitTimeoutSeconds, responsesMaxDecompressedBodyMiB, accountAutoFreezeThreshold, accountAutoFreezeWindowSeconds, accountAutoFreezeDurationSeconds } = form
+    const { refreshMarginSeconds, refreshConcurrency, maxConcurrentPerAccount, openaiGuardianReservedConcurrency, requestIntervalMs, rotationStrategy, openaiSessionBindingTtlHours, maxWaitingPerKey, maxWaitingPerAccount, concurrencyWaitTimeoutSeconds, responsesMaxDecompressedBodyMiB, accountAutoFreezeThreshold, accountAutoFreezeWindowSeconds, accountAutoFreezeDurationSeconds } = form
     if (refreshMarginSeconds === null || refreshConcurrency === null || maxConcurrentPerAccount === null || openaiGuardianReservedConcurrency === null || requestIntervalMs === null || !rotationStrategy || maxWaitingPerKey === null || maxWaitingPerAccount === null || concurrencyWaitTimeoutSeconds === null) {
       toast.warning('请完整填写并发、队列、凭据刷新参数和调度策略')
+      return
+    }
+    if (openaiSessionBindingTtlHours === null || !Number.isInteger(openaiSessionBindingTtlHours) || openaiSessionBindingTtlHours < 1 || openaiSessionBindingTtlHours > 720) {
+      toast.warning('OpenAI 会话绑定保留时间应为 1～720 小时的整数')
       return
     }
     if (!Number.isInteger(maxConcurrentPerAccount) || maxConcurrentPerAccount < 0 || maxConcurrentPerAccount > 4294967295) {
@@ -287,6 +294,7 @@ export function useSettingsForm() {
         concurrencyWaitTimeoutSeconds,
         responsesMaxDecompressedBodyBytes: responsesMaxDecompressedBodyMiB * MIB,
         rotationStrategy,
+        openaiSessionBindingTtlHours,
         smartScheduling: { ...smartScheduling },
         minCodexDesktopVersion: form.minCodexDesktopVersion.trim() || null,
         minCodexCliVersion: form.minCodexCliVersion.trim() || null,
@@ -335,6 +343,7 @@ export function useSettingsForm() {
     maxWaitingPerAccountValue,
     concurrencyWaitTimeoutSecondsValue,
     responsesMaxDecompressedBodyMiBValue,
+    openaiSessionBindingTtlHoursValue,
     accountAutoFreezeThresholdValue,
     accountAutoFreezeWindowSecondsValue,
     accountAutoFreezeDurationSecondsValue,

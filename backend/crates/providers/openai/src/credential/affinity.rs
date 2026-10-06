@@ -1,10 +1,8 @@
 //! 逻辑会话账号绑定与线程传输隔离键的单向派生
 
-use std::time::Duration;
-
 use gateway_core::operation::RawJsonPayload;
 use gateway_core::policy::ClientApiKeyId;
-use gateway_core::provider_ports::ProviderSessionAffinityKey;
+use gateway_core::provider_ports::{ProviderSessionAffinityKey, ProviderSessionAlias};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -12,7 +10,6 @@ use crate::transport::protocol::responses::CodexResponsesRequest;
 use crate::transport::request::derive_conversation_anchor;
 
 const AFFINITY_KEY_HASH_LENGTH: usize = 12;
-pub(crate) const CODEX_ROOT_SESSION_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// 一次请求派生出的账号亲和键及其结构化日志上下文
 pub(crate) struct CodexSessionAffinity {
@@ -41,6 +38,13 @@ impl CodexSessionAffinity {
 
     pub(crate) const fn follow_only(&self) -> bool {
         self.follow_only
+    }
+
+    pub(crate) fn to_alias(&self) -> ProviderSessionAlias {
+        ProviderSessionAlias {
+            session_key: self.key.clone(),
+            follow_only: self.follow_only,
+        }
     }
 
     pub(crate) fn with_follow_only(mut self, follow_only: bool) -> Self {

@@ -604,6 +604,9 @@ impl SettingsStore for MemorySettingsStore {
             max_waiting_per_account: command.max_waiting_per_account,
             concurrency_wait_timeout_seconds: command.concurrency_wait_timeout_seconds,
             openai_guardian_reserved_concurrency: command.openai_guardian_reserved_concurrency,
+            openai_session_binding_ttl_hours: command
+                .openai_session_binding_ttl_hours
+                .unwrap_or(settings.openai_session_binding_ttl_hours),
             responses_max_decompressed_body_bytes: command.responses_max_decompressed_body_bytes,
             smart_scheduling: command.smart_scheduling,
             rotation_strategy: command.rotation_strategy,
@@ -1613,6 +1616,7 @@ fn test_runtime_settings() -> RuntimeSettings {
         max_waiting_per_account: 0,
         concurrency_wait_timeout_seconds: 30,
         openai_guardian_reserved_concurrency: 0,
+        openai_session_binding_ttl_hours: 24,
         responses_max_decompressed_body_bytes: 64 * 1024 * 1024,
         smart_scheduling: gateway_core::account::SmartSchedulingConfig::default(),
         rotation_strategy: RotationStrategy::Smart,

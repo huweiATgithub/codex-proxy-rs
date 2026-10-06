@@ -31,6 +31,7 @@ pub struct RuntimeSettings {
     pub max_waiting_per_account: u32,
     pub concurrency_wait_timeout_seconds: u32,
     pub openai_guardian_reserved_concurrency: u32,
+    pub openai_session_binding_ttl_hours: u32,
     pub responses_max_decompressed_body_bytes: u64,
     pub smart_scheduling: gateway_core::account::SmartSchedulingConfig,
     pub rotation_strategy: String,
@@ -72,6 +73,10 @@ impl fmt::Debug for RuntimeSettings {
                 &self.max_concurrent_per_account,
             )
             .field("request_interval_ms", &self.request_interval_ms)
+            .field(
+                "openai_session_binding_ttl_hours",
+                &self.openai_session_binding_ttl_hours,
+            )
             .field("rotation_strategy", &self.rotation_strategy)
             .field("request_location_enabled", &self.request_location_enabled)
             .field("request_location", &self.request_location)
@@ -134,6 +139,7 @@ pub struct RuntimeSettingsUpdate {
     pub max_waiting_per_account: u32,
     pub concurrency_wait_timeout_seconds: u32,
     pub openai_guardian_reserved_concurrency: u32,
+    pub openai_session_binding_ttl_hours: Option<u32>,
     pub responses_max_decompressed_body_bytes: u64,
     pub smart_scheduling: gateway_core::account::SmartSchedulingConfig,
     pub rotation_strategy: String,
@@ -176,6 +182,9 @@ impl RuntimeSettingsUpdate {
             || isize::try_from(self.responses_max_decompressed_body_bytes).is_err()
             || self.refresh_margin_seconds == 0
             || self.refresh_concurrency == 0
+            || self.openai_session_binding_ttl_hours.is_some_and(|hours| {
+                gateway_core::settings::parse_openai_session_binding_ttl_hours(hours).is_err()
+            })
             || self.max_waiting_per_key > 1_000
             || self.max_waiting_per_account > 1_000
             || !(1..=120).contains(&self.concurrency_wait_timeout_seconds)
@@ -264,7 +273,7 @@ pub(crate) async fn load_runtime_settings_from_pool(pool: &PgPool) -> StoreResul
                     refresh_concurrency, max_concurrent_per_account, request_interval_ms,
                     rotation_strategy, smart_scheduling_json, model_mappings_json, usage_retention_days, ops_event_retention_days,
                     audit_retention_days, min_codex_desktop_version,
-                    min_codex_cli_version, updated_at, responses_max_decompressed_body_bytes, max_waiting_per_key, max_waiting_per_account, concurrency_wait_timeout_seconds, openai_guardian_reserved_concurrency,
+                    min_codex_cli_version, updated_at, responses_max_decompressed_body_bytes, max_waiting_per_key, max_waiting_per_account, concurrency_wait_timeout_seconds, openai_guardian_reserved_concurrency, openai_session_binding_ttl_hours,
                     account_auto_freeze_enabled, account_auto_freeze_threshold,
                     account_auto_freeze_window_seconds, account_auto_freeze_duration_seconds,
                     account_auto_freeze_probe_enabled, account_auto_freeze_probe_model,
@@ -439,7 +448,7 @@ pub(crate) async fn load_runtime_settings_in_transaction(
                 refresh_concurrency, max_concurrent_per_account, request_interval_ms,
                 rotation_strategy, smart_scheduling_json, model_mappings_json, usage_retention_days, ops_event_retention_days,
                 audit_retention_days, min_codex_desktop_version,
-                min_codex_cli_version, updated_at, responses_max_decompressed_body_bytes, max_waiting_per_key, max_waiting_per_account, concurrency_wait_timeout_seconds, openai_guardian_reserved_concurrency,
+                min_codex_cli_version, updated_at, responses_max_decompressed_body_bytes, max_waiting_per_key, max_waiting_per_account, concurrency_wait_timeout_seconds, openai_guardian_reserved_concurrency, openai_session_binding_ttl_hours,
                 account_auto_freeze_enabled, account_auto_freeze_threshold,
                 account_auto_freeze_window_seconds, account_auto_freeze_duration_seconds,
                 account_auto_freeze_probe_enabled, account_auto_freeze_probe_model,
@@ -515,6 +524,7 @@ pub(crate) async fn update_runtime_settings_in_transaction(
                      account_warmup_model = $29,
                      smart_scheduling_json = $30,
                      openai_guardian_reserved_concurrency = $31,
+                     openai_session_binding_ttl_hours = coalesce($32, openai_session_binding_ttl_hours),
 	                 updated_at = now()
 	             where id = 1
 	             returning config_revision",
@@ -562,6 +572,7 @@ pub(crate) async fn update_runtime_settings_in_transaction(
     .bind(update.account_warmup_model.as_deref())
     .bind(sqlx::types::Json(update.smart_scheduling))
     .bind(i64::from(update.openai_guardian_reserved_concurrency))
+    .bind(update.openai_session_binding_ttl_hours.map(i64::from))
     .fetch_optional(&mut **transaction)
     .await
     .map_err(|_| postgres_unavailable("update runtime settings in transaction"))?
@@ -635,6 +646,7 @@ struct RuntimeSettingsRow {
     max_waiting_per_account: i64,
     concurrency_wait_timeout_seconds: i64,
     openai_guardian_reserved_concurrency: i64,
+    openai_session_binding_ttl_hours: i64,
     responses_max_decompressed_body_bytes: i64,
     account_auto_freeze_enabled: bool,
     account_auto_freeze_threshold: i64,
@@ -689,6 +701,7 @@ fn runtime_settings_from_row(row: RuntimeSettingsRow) -> StoreResult<RuntimeSett
         max_waiting_per_account: to_u32(row.max_waiting_per_account)?,
         concurrency_wait_timeout_seconds: to_u32(row.concurrency_wait_timeout_seconds)?,
         openai_guardian_reserved_concurrency: to_u32(row.openai_guardian_reserved_concurrency)?,
+        openai_session_binding_ttl_hours: to_u32(row.openai_session_binding_ttl_hours)?,
         responses_max_decompressed_body_bytes: to_u64(row.responses_max_decompressed_body_bytes)?,
         account_auto_freeze_enabled: row.account_auto_freeze_enabled,
         account_auto_freeze_threshold: to_u32(row.account_auto_freeze_threshold)?,

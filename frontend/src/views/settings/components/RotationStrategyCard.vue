@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { rotationOptions } from '../constants'
 import type { SmartSchedulingConfig } from '@/api'
-import { BaseCard, BaseIconButton } from '@codex-proxy/ui'
+import { BaseCard, BaseForm, BaseFormItem, BaseIconButton, BaseInput } from '@codex-proxy/ui'
 import { Settings2 } from '@lucide/vue'
 import { isEqual } from 'es-toolkit'
 import { computed, shallowRef } from 'vue'
@@ -18,6 +18,7 @@ const props = defineProps<{
 
 const model = defineModel<RotationStrategy | ''>({ required: true })
 const smartScheduling = defineModel<SmartSchedulingConfig | undefined>('smartScheduling', { required: true })
+const openaiSessionBindingTtlHours = defineModel<string>('openaiSessionBindingTtlHours', { required: true })
 const settingsOpen = shallowRef(false)
 const customized = computed(() => smartScheduling.value && props.smartDefaults && !isEqual(smartScheduling.value, props.smartDefaults))
 </script>
@@ -72,6 +73,23 @@ const customized = computed(() => smartScheduling.value && props.smartDefaults &
         </BaseIconButton>
       </div>
     </div>
+    <BaseForm class="mt-4 max-w-sm">
+      <BaseFormItem label="OpenAI 会话绑定保留时间" description="请求获准发送后重新计时，范围 1～720 小时">
+        <BaseInput
+          v-model="openaiSessionBindingTtlHours"
+          aria-label="OpenAI 会话绑定保留时间"
+          type="number"
+          min="1"
+          max="720"
+          step="1"
+          :disabled="disabled"
+        >
+          <template #suffix>
+            小时
+          </template>
+        </BaseInput>
+      </BaseFormItem>
+    </BaseForm>
   </BaseCard>
   <SmartSchedulingModal
     v-if="smartScheduling && smartDefaults"

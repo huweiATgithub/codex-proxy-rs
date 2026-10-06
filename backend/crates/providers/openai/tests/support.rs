@@ -24,7 +24,7 @@ use gateway_core::provider_ports::{
     ProviderLeaseRequest, ProviderRefreshPolicy, ProviderRuntimePolicyPort,
     ProviderSchedulingLeaseRequest, ProviderSchedulingState, ProviderScopedCooldown,
     ProviderSessionAffinityKey, ProviderSessionAffinityPort, ProviderSessionExclusionPort,
-    ProviderSessionExclusions, ProviderStoreError,
+    ProviderSessionExclusions, ProviderStoreError, ProviderStoreErrorKind,
 };
 use gateway_core::routing::ProviderKind;
 use provider_openai::credential::{
@@ -726,6 +726,14 @@ impl ProviderLeasePort for TestLeaseCoordinator {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionAffinityOperation {
+    Load,
+    Admit,
+    LoadAlias,
+    BindAlias,
+}
+
 #[derive(Default)]
 pub(crate) struct MemorySessionAffinity {
     aliases: Mutex<BTreeMap<(String, String), gateway_core::provider_ports::ProviderSessionAlias>>,
@@ -733,11 +741,49 @@ pub(crate) struct MemorySessionAffinity {
         Mutex<BTreeMap<(String, String), gateway_core::provider_ports::ProviderSessionBinding>>,
     lookups: Mutex<Vec<String>>,
     renewal_ttls: Mutex<Vec<Duration>>,
+    alias_ttls: Mutex<Vec<Duration>>,
+    failure: Mutex<Option<(SessionAffinityOperation, ProviderStoreErrorKind)>>,
 }
 
 impl MemorySessionAffinity {
     pub(crate) fn renewal_ttls(&self) -> Vec<Duration> {
         self.renewal_ttls.lock().expect("affinity TTL lock").clone()
+    }
+
+    pub(crate) fn alias_ttls(&self) -> Vec<Duration> {
+        self.alias_ttls.lock().expect("alias TTL lock").clone()
+    }
+
+    pub(crate) fn alias_records(&self) -> Vec<gateway_core::provider_ports::ProviderSessionAlias> {
+        self.aliases
+            .lock()
+            .expect("alias lock")
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    pub(crate) fn fail_operation(
+        &self,
+        operation: SessionAffinityOperation,
+        kind: ProviderStoreErrorKind,
+    ) {
+        *self.failure.lock().expect("affinity failure lock") = Some((operation, kind));
+    }
+
+    fn check_operation(
+        &self,
+        operation: SessionAffinityOperation,
+    ) -> Result<(), ProviderStoreError> {
+        if let Some((failed, kind)) = *self.failure.lock().expect("affinity failure lock")
+            && failed == operation
+        {
+            return Err(ProviderStoreError::new(
+                kind,
+                "injected session affinity failure",
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) fn lookup_keys(&self) -> Vec<String> {
@@ -795,6 +841,7 @@ impl ProviderSessionAffinityPort for MemorySessionAffinity {
         Result<Option<gateway_core::provider_ports::ProviderSessionBinding>, ProviderStoreError>,
     > {
         Box::pin(async move {
+            self.check_operation(SessionAffinityOperation::Load)?;
             self.lookups
                 .lock()
                 .expect("lookups")
@@ -823,6 +870,7 @@ impl ProviderSessionAffinityPort for MemorySessionAffinity {
         Result<Option<gateway_core::provider_ports::ProviderSessionBinding>, ProviderStoreError>,
     > {
         Box::pin(async move {
+            self.check_operation(SessionAffinityOperation::Admit)?;
             let key = (
                 provider.as_str().to_owned(),
                 key.expose_to_store().to_owned(),
@@ -855,6 +903,7 @@ impl ProviderSessionAffinityPort for MemorySessionAffinity {
         Result<Option<gateway_core::provider_ports::ProviderSessionAlias>, ProviderStoreError>,
     > {
         Box::pin(async move {
+            self.check_operation(SessionAffinityOperation::LoadAlias)?;
             Ok(self
                 .aliases
                 .lock()
@@ -871,9 +920,10 @@ impl ProviderSessionAffinityPort for MemorySessionAffinity {
         provider: &'a ProviderKind,
         alias: &'a ProviderSessionAffinityKey,
         session: &'a gateway_core::provider_ports::ProviderSessionAlias,
-        _: Duration,
+        ttl: Duration,
     ) -> BoxFuture<'a, Result<bool, ProviderStoreError>> {
         Box::pin(async move {
+            self.check_operation(SessionAffinityOperation::BindAlias)?;
             let mut aliases = self.aliases.lock().unwrap();
             let current = aliases
                 .entry((
@@ -881,7 +931,11 @@ impl ProviderSessionAffinityPort for MemorySessionAffinity {
                     alias.expose_to_store().to_owned(),
                 ))
                 .or_insert_with(|| session.clone());
-            Ok(current == session)
+            let applied = current == session;
+            if applied {
+                self.alias_ttls.lock().expect("alias TTL lock").push(ttl);
+            }
+            Ok(applied)
         })
     }
 }

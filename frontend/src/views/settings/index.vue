@@ -66,6 +66,7 @@ const {
   maxWaitingPerAccountValue,
   concurrencyWaitTimeoutSecondsValue,
   responsesMaxDecompressedBodyMiBValue,
+  openaiSessionBindingTtlHoursValue,
   accountAutoFreezeThresholdValue,
   accountAutoFreezeWindowSecondsValue,
   accountAutoFreezeDurationSecondsValue,
@@ -147,6 +148,7 @@ watch(section, (value) => {
           <RotationStrategyCard
             v-model="form.rotationStrategy"
             v-model:smart-scheduling="form.smartScheduling"
+            v-model:openai-session-binding-ttl-hours="openaiSessionBindingTtlHoursValue"
             :smart-defaults="smartSchedulingDefaults"
             :disabled="disabled"
             :options="rotationOptions"

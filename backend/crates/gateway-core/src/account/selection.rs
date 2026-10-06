@@ -55,7 +55,11 @@ pub struct AccountSelectionPolicy {
     request_interval: Duration,
     queue_policy: ConcurrencyQueuePolicy,
     openai_guardian_reserved_concurrency: u32,
+    openai_session_binding_ttl: Duration,
 }
+
+/// OpenAI 会话绑定的默认有效期，单位为小时
+pub const DEFAULT_OPENAI_SESSION_BINDING_TTL_HOURS: u32 = 24;
 
 impl AccountSelectionPolicy {
     #[must_use]
@@ -70,6 +74,9 @@ impl AccountSelectionPolicy {
             max_concurrent_per_account: max_concurrent_per_account.into(),
             request_interval,
             openai_guardian_reserved_concurrency: 0,
+            openai_session_binding_ttl: Duration::from_secs(
+                u64::from(DEFAULT_OPENAI_SESSION_BINDING_TTL_HOURS) * 3_600,
+            ),
             queue_policy: ConcurrencyQueuePolicy {
                 max_waiting: 0,
                 timeout: Duration::ZERO,
@@ -87,6 +94,18 @@ impl AccountSelectionPolicy {
     #[must_use]
     pub const fn openai_guardian_reserved_concurrency(self) -> u32 {
         self.openai_guardian_reserved_concurrency
+    }
+
+    /// 只传递已解析的有效期，会话绑定及续期由 OpenAI Provider 执行
+    #[must_use]
+    pub const fn with_openai_session_binding_ttl(mut self, ttl: Duration) -> Self {
+        self.openai_session_binding_ttl = ttl;
+        self
+    }
+
+    #[must_use]
+    pub const fn openai_session_binding_ttl(self) -> Duration {
+        self.openai_session_binding_ttl
     }
 
     #[must_use]

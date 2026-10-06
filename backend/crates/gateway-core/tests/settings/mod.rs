@@ -1,6 +1,6 @@
 //! 验证运行设置编译、Key 默认值与显式请求覆盖的解析和继承
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use gateway_core::{
     account::FastMode,
@@ -8,7 +8,7 @@ use gateway_core::{
     identity::ProviderKind,
     policy::{ClientApiKeyId, ClientPolicy, PlaintextClientApiKey, RateLimits},
     routing::{ClientRoutingScope, ConfigRevision, FrozenAccountScope, RuntimeSnapshot},
-    settings::{RequestSettings, SettingsValues},
+    settings::{RequestSettings, SettingsValues, parse_openai_session_binding_ttl_hours},
 };
 use serde_json::json;
 
@@ -83,6 +83,51 @@ fn settings_facts_are_shared_and_invalid_compilation_does_not_change_them() {
             .is_err()
     );
     assert!(std::ptr::eq(original.settings(), frozen.settings()));
+}
+
+#[test]
+fn session_binding_ttl_hours_parse_the_supported_range() {
+    for hours in [1, 24, 168, 720] {
+        assert_eq!(
+            parse_openai_session_binding_ttl_hours(hours).unwrap(),
+            Duration::from_secs(u64::from(hours) * 3_600),
+        );
+    }
+}
+
+#[test]
+fn invalid_session_binding_ttl_does_not_change_request_settings() {
+    let original = RequestSettings::new(snapshot(1, "host"));
+    for invalid in [0, 721, u32::MAX] {
+        assert!(
+            original
+                .replace(
+                    original
+                        .values()
+                        .clone()
+                        .with_openai_session_binding_ttl_hours(invalid),
+                    "plugin",
+                )
+                .is_err(),
+        );
+    }
+    assert_eq!(
+        serde_json::to_value(original.values()).unwrap()["openai_session_binding_ttl_hours"],
+        24,
+    );
+    assert_eq!(original.inspect()["overrides"], json!({}));
+}
+
+#[test]
+fn settings_without_session_binding_ttl_keep_the_default() {
+    let original = snapshot(1, "host");
+    let mut serialized = serde_json::to_value(original.settings()).unwrap();
+    serialized
+        .as_object_mut()
+        .unwrap()
+        .remove("openai_session_binding_ttl_hours");
+    let parsed: SettingsValues = serde_json::from_value(serialized).unwrap();
+    assert_eq!(&parsed, original.settings());
 }
 
 #[test]

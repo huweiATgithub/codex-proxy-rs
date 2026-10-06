@@ -1122,6 +1122,7 @@ impl SettingsStore for StaticSettingsStore {
             max_waiting_per_account: 0,
             concurrency_wait_timeout_seconds: 30,
             openai_guardian_reserved_concurrency: 0,
+            openai_session_binding_ttl_hours: 24,
             responses_max_decompressed_body_bytes: 64 * 1024 * 1024,
             smart_scheduling: gateway_core::account::SmartSchedulingConfig::default(),
             rotation_strategy: RotationStrategy::Smart,

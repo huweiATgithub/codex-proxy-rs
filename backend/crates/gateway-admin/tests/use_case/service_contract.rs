@@ -257,9 +257,11 @@ fn sdk_settings_contract_matches_host_declarations() {
     assert_eq!(operations.len(), outputs.len(), "公开服务方法必须完整声明");
     let assignments = replacement_fields.iter().map(|field| match field.to_string().as_str() {
         "expected_revision" => quote!(expected_revision: settings.config_revision),
+        "openai_session_binding_ttl_hours" => quote!(openai_session_binding_ttl_hours: Some(settings.openai_session_binding_ttl_hours)),
         "request_profile_updates" => quote!(request_profile_updates: settings.request_profiles.into_iter().map(|(provider, value)| (provider, Some(value))).collect()),
         _ => quote!(#field: settings.#field),
     });
+    let default_ttl_hours = gateway_core::settings::DEFAULT_OPENAI_SESSION_BINDING_TTL_HOURS;
     let generated = quote! {
         //! 宿主设置服务的操作标识与请求、响应数据合同
         //!
@@ -274,6 +276,7 @@ fn sdk_settings_contract_matches_host_declarations() {
         pub type Revision = NonZeroU64;
         pub type RotationStrategy = String;
         pub type PricingOverrides = BTreeMap<String, BTreeMap<String, ModelPriceOverride>>;
+        const fn default_openai_session_binding_ttl_hours() -> u32 { #default_ttl_hours }
         #(#types)*
         #(#operations)*
         impl From<RuntimeSettings> for ReplaceRuntimeSettings {
