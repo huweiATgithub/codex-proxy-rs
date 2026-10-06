@@ -4,19 +4,23 @@ import type { ClientProfilePreview } from '@/api/modules/settings/profiles'
 import { ZEmpty, ZSkeleton } from '@codex-proxy/ui'
 import { useI18n } from 'vue-i18n'
 
-defineProps<{
-  preview?: Pick<ClientProfilePreview, 'userAgent' | 'versionSource' | 'checkedAtDisplay' | 'error'> & { versionLag?: number | null }
+withDefaults(defineProps<{
+  preview?: Pick<ClientProfilePreview, 'userAgent' | 'versionSource' | 'checkedAtDisplay' | 'error'> & Partial<Pick<ClientProfilePreview, 'originator' | 'codexVersion' | 'versionLag'>>
   previewing: boolean
   needsVersionInput: boolean
   error: string
-}>()
+  policy?: string
+  showHeaders?: boolean
+  showUserAgent?: boolean
+  emptyLabel?: string
+}>(), { showUserAgent: true })
 
 const { t } = useI18n({ useScope: 'global' })
 </script>
 
 <template>
   <p v-if="needsVersionInput" role="status" class="m-0 text-cp-sm text-cp-text-tertiary">
-    {{ t('settings.clientProfile.previewAfterFillingInVersion') }}
+    {{ emptyLabel ?? t('settings.clientProfile.previewAfterFillingInVersion') }}
   </p>
   <ZEmpty v-else-if="error && !previewing" :title="t('settings.clientProfile.previewIsNotAvailableYet')" :description="error" size="small" surface="none" role="alert" />
   <div
@@ -34,9 +38,12 @@ const { t } = useI18n({ useScope: 'global' })
       </div>
     </template>
     <template v-else-if="preview">
-      <code class="break-all text-cp-sm text-cp-text">{{ preview.userAgent }}</code>
+      <code v-if="showUserAgent" class="break-all text-cp-sm text-cp-text">{{ preview.userAgent }}</code>
+      <p v-if="showHeaders" class="m-0 break-all text-cp-xs text-cp-text-secondary">
+        {{ preview.originator }} · Core {{ preview.codexVersion }}
+      </p>
       <p class="m-0 text-cp-xs text-cp-text-tertiary">
-        {{ preview.versionSource === 'custom' ? t('settings.clientProfile.fixedIdentity') : t('settings.clientProfile.automaticUpdates') }}
+        {{ policy ?? (preview.versionSource === 'custom' ? t('settings.clientProfile.fixedIdentity') : t('settings.clientProfile.automaticUpdates')) }}
         <template v-if="preview.versionSource === 'official'">
           <template v-if="preview.versionLag">
             {{ t('settings.clientProfile.versionsBehind', { version: preview.versionLag }) }}
@@ -45,8 +52,11 @@ const { t } = useI18n({ useScope: 'global' })
         </template>
       </p>
       <p v-if="preview.error && preview.versionSource !== 'custom'" :title="preview.error" class="m-0 text-cp-sm text-cp-warning">
-        {{ t('settings.clientProfile.updateFailedUseLastVersion') }}
+        {{ preview.versionSource === 'catalog' ? t('settings.clientProfile.catalog.updateFailedUseSavedIdentity') : t('settings.clientProfile.updateFailedUseLastVersion') }}
       </p>
+      <div v-if="$slots.actions" class="flex flex-wrap items-center gap-2">
+        <slot name="actions" />
+      </div>
     </template>
   </div>
 </template>
