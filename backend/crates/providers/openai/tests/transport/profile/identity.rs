@@ -119,6 +119,60 @@ fn raw_identity_rejects_injection_conflicting_headers_and_unknown_modes() {
 }
 
 #[test]
+fn catalog_selection_rejects_mismatched_client_environment_and_release() {
+    let baseline = json!({"mode":"catalog","versionMode":"fixed","entry":{
+        "client":"cli","environment":"linux-ubuntu-x64","release":"0.156.1",
+        "userAgent":"codex-tui/0.156.1 (Ubuntu 24.4.0; x86_64) xterm-256color (codex-tui; 0.156.1)"
+    }});
+    for patch in [
+        json!({"client":"exec"}),
+        json!({"profile":"herdr"}),
+        json!({"profile":"unknown"}),
+        json!({"environment":"linux-debian-x64"}),
+        json!({"environment":"linux-ubuntu-arm64"}),
+        json!({"release":"0.157.0"}),
+    ] {
+        let mut configuration = baseline.clone();
+        configuration["entry"]
+            .as_object_mut()
+            .unwrap()
+            .extend(patch.as_object().unwrap().clone());
+        assert!(RequestProfileSelection::parse(&document(configuration)).is_err());
+    }
+}
+
+#[test]
+fn catalog_saved_entry_resolves_offline_without_changing_the_official_preset() {
+    let state = CodexWireProfileState::new(CodexWireProfile {
+        residency: Some("us".to_owned()),
+        account_routing_override: Some("us_cr".to_owned()),
+        ..Default::default()
+    });
+    let original = state.snapshot();
+    let entry = json!({
+        "client":"cli","environment":"linux-ubuntu-x64","release":"0.156.1",
+        "userAgent":"codex-tui/0.156.1 (Ubuntu 24.4.0; x86_64) xterm-256color (codex-tui; 0.156.1)"
+    });
+    for mode in ["latest", "fixed"] {
+        let configuration = document(json!({"mode":"catalog", "versionMode":mode, "entry":entry}));
+        let profile = RequestProfileSelection::parse(&configuration)
+            .unwrap()
+            .resolve(&state)
+            .unwrap();
+        let headers = build_codex_model_headers(&profile, "Bearer fixture", None).unwrap();
+        assert_eq!(headers["user-agent"], entry["userAgent"].as_str().unwrap());
+        assert_eq!(headers["originator"], "codex-tui");
+        assert_eq!(headers["version"], "0.156.1");
+        assert_eq!(headers["x-openai-internal-codex-residency"], "us");
+        assert_eq!(headers["x-openai-account-routing-override"], "us_cr");
+        let preview = state.preview_selection(&configuration).unwrap();
+        assert_eq!(preview.expose_to_provider()["versionSource"], "catalog");
+        assert!(preview.expose_to_provider()["verifiedAt"].is_null());
+    }
+    assert_eq!(state.snapshot(), original);
+}
+
+#[test]
 fn preset_identity_round_trip_preserves_request_headers_and_official_preview() {
     let state = CodexWireProfileState::new(CodexWireProfile::default());
     let configuration = ClientProfileSelection::default().document().unwrap();

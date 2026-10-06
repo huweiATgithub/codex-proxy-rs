@@ -368,7 +368,11 @@ impl CodexWireProfileState {
                 }));
             }
         }
-        object(&json!({ "presets": presets, "maxVersionLag": MAX_VERSION_LAG }))
+        object(&json!({
+            "presets": presets,
+            "maxVersionLag": MAX_VERSION_LAG,
+            "catalog": self.catalog().snapshot(),
+        }))
     }
 }
 
