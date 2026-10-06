@@ -1326,6 +1326,7 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 | `GET` | `/api/admin/settings/client-downloads/codex-desktop/windows` | 提取 Codex Desktop Windows 离线安装直链；`refresh=true` 强制刷新进程内短缓存 |
 | `GET` | `/api/admin/settings/client-profiles/{provider}` | 读取 `openai` 或 `xai` 的可选配置和 `globalConfiguration` |
 | `POST` | `/api/admin/settings/client-profiles/{provider}/preview` | `{ configuration }`，完整配置对象或 `null`（解析当前通用设置）；只预览，不保存 |
+| `POST` | `/api/admin/settings/client-profiles/{provider}/refresh` | 刷新该 Provider 的客户端目录，返回与选项接口相同的结构；不修改已保存配置，目前由 OpenAI 支持 |
 | `GET` | `/api/admin/settings/admin-api-key` | 只返回管理 API Key 是否存在 |
 | `POST` | `/api/admin/settings/admin-api-key/delete` | 删除管理 API Key |
 | `POST` | `/api/admin/settings/admin-api-key/regenerate` | 重新生成并一次性返回完整管理 API Key |
@@ -1549,7 +1550,7 @@ models.dev 同步只导入可表示为当前文本 Token 计价的 OpenAI/xAI �
 `openaiClientProfile` 与 `xaiClientProfile` 是同一映射的兼容字段：省略保留，不能显式提交 `null`；
 与通用字段同时提供时必须一致，否则整次更新拒绝。读取响应从映射派生这两个字段，不维护平行状态
 
-直接读取 `openai` 或 `xai` 的选项与预览。OpenAI 选项返回六个 `presets` 与 `maxVersionLag`，xAI 返回 `defaults`；
+直接读取 `openai` 或 `xai` 的选项与预览。OpenAI 选项返回 `catalog`、六个 `presets` 与 `maxVersionLag`，xAI 返回 `defaults`；
 响应均包含 `globalConfiguration`
 
 ### OpenAI 上游客户端身份
@@ -1558,6 +1559,38 @@ models.dev 同步只导入可表示为当前文本 Token 计价的 OpenAI/xAI �
 兼容字段的更新语义见上节。初始化不读取 YAML 身份字段。
 该配置作用于 Client Key 的 OpenAI 模型请求与原生模型目录，适用于 HTTP/SSE、WebSocket、Images 和 Search。
 不改变 xAI、入站客户端版本门禁、账号认证或后台 Desktop 专属操作
+
+目录配置保存完整条目：
+
+```json
+{
+  "mode": "catalog",
+  "versionMode": "latest",
+  "entry": {
+    "client": "cli",
+    "environment": "linux-ubuntu-x64",
+    "profile": "xterm-256color",
+    "release": "0.156.1",
+    "userAgent": "codex-tui/0.156.1 (Ubuntu 24.4.0; x86_64) xterm-256color (codex-tui; 0.156.1)"
+  }
+}
+```
+
+`entry.client` 为 `desktop`、`cli` 或 `exec`，`environment` 由目录给出，`release` 是发布版本。
+CLI 与 Exec 的 `profile` 为 `xterm-256color`、`WindowsTerminal`、`vscode` 或 `herdr`，
+不支持的平台与 Profile 组合不出现在目录中；旧条目省略该字段时对应 `xterm-256color`，Desktop 不携带该字段。
+Desktop 发布版本与 UA 中的 Core 版本分别保留。`latest` 跟随同客户端、同环境、同 Profile 的最新完整条目，
+刷新失败时继续使用上次成功的目录；没有该组合且版本不低于保存快照的可用条目时，使用保存的快照。
+`fixed` 始终使用保存的完整快照，同版本资产修正也不改变身份。
+目录模式不接受预设的 `versionLag` 或环境字段覆盖
+
+`catalog.entries` 按来源分组，各来源内按发布版本从新到旧排列，`releaseLimit` 表示每个来源最多读取的稳定发布数量。
+`catalog.sources` 按 `desktop` / `cli` 返回 `checkedAt`、`updatedAt`、对应的展示时间和 `error`，Exec 与 CLI 共用来源。
+后端读取 [Desktop UA 发布列表](https://github.com/huweiATgithub/codex-desktop-ua/releases) 和
+[CLI UA 发布列表](https://github.com/huweiATgithub/codex-ua/releases) 中的 `ua-matrix.json`，每 24 小时检查，也可手动刷新。
+刷新失败保留该来源上次成功的目录，接口仍返回选项，调用方通过 `catalog.sources[].error` 判断各来源是否成功；
+固定和自定义配置不受刷新影响。目录缓存恢复时 `checkedAt` 使用缓存更新时间，新检查完成后更新。
+目录由独立项目维护，不表示本代理重新核验了官方制品
 
 自定义配置使用 `{ "mode": "custom", "userAgent": "完整 UA" }`。
 已识别的 `Codex Desktop`、`codex-tui`、`codex_exec`、`codex_cli_rs` 前缀由后端解析 `originator` 和 Core `version`，
@@ -1603,13 +1636,14 @@ Desktop 的应用版本、Core 和构建号来自同一平台、架构的官方�
 Windows/Linux 通过 ETag 检查更新，未变化时复用已核验版本；CLI 依据官方 npm 稳定标签和对应平台依赖
 
 预览返回 `configuration`、`source`（`global` / `override`）、`userAgent`、解析后的环境和版本字段，
-以及 `versionSource`（`official` / `custom`）、`versionLag`、`verifiedAt`、`checkedAt`、`error`。
+以及 `versionSource`（`official` / `catalog` / `custom`）、`versionLag`、`verifiedAt`、`checkedAt`、`error`。
+目录预览的 `configuration.entry` 是实际解析的完整条目，可用于固定当前版本或转为自定义。
 自定义预览中的 `recognized` 表示是否识别出配套请求头。
 `verifiedAt` 只表示版本资料核验，不能代表自定义运行环境或 TLS 已核验；固定版本返回 `null`。
-完整自定义配置不携带官方制品核验时间。
+目录和完整自定义配置不携带官方制品核验时间。
 客户端画像配置控制应用层请求字段，不切换操作系统的 TLS 实现。默认 HTTP 使用 native TLS，
 WebSocket 使用 rustls；配置自定义 CA 时 HTTP 也使用 rustls。TLS 指纹需按实际部署平台与传输路径核验。
-未完成本次启动检查时 `checkedAt` 为 `null`。非法或当前不可用的选择返回 `400`，保存失败不提交其他修改
+官方预设未完成本次启动检查时 `checkedAt` 为 `null`。非法或当前不可用的选择返回 `400`，保存失败不提交其他修改
 
 配置在请求开始时冻结，Provider 首次解析的版本用于该请求的全部重试与换号。
 已建立 WebSocket 的精确续写沿用所属连接；新请求使用保存后的选择

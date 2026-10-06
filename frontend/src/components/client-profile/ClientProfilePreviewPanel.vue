@@ -2,17 +2,21 @@
 import type { ClientProfilePreview } from '@/api/modules/settings/profiles'
 import { BaseSkeleton } from '@codex-proxy/ui'
 
-defineProps<{
-  preview?: Pick<ClientProfilePreview, 'userAgent' | 'versionSource' | 'checkedAtDisplay' | 'error'> & { versionLag?: number | null }
+withDefaults(defineProps<{
+  preview?: Pick<ClientProfilePreview, 'userAgent' | 'versionSource' | 'checkedAtDisplay' | 'error'> & Partial<Pick<ClientProfilePreview, 'originator' | 'codexVersion' | 'versionLag'>>
   previewing: boolean
   needsVersionInput: boolean
   error: string
-}>()
+  policy?: string
+  showHeaders?: boolean
+  showUserAgent?: boolean
+  emptyLabel?: string
+}>(), { showUserAgent: true, emptyLabel: '填写版本后预览' })
 </script>
 
 <template>
   <p v-if="needsVersionInput" role="status" class="m-0 text-cp-sm text-cp-text-tertiary">
-    填写版本后预览
+    {{ emptyLabel }}
   </p>
   <p v-else-if="error && !previewing" role="alert" class="m-0 text-cp-sm text-cp-error">
     {{ error }}
@@ -32,9 +36,12 @@ defineProps<{
       </div>
     </template>
     <template v-else-if="preview">
-      <code class="break-all text-cp-sm text-cp-text">{{ preview.userAgent }}</code>
+      <code v-if="showUserAgent" class="break-all text-cp-sm text-cp-text">{{ preview.userAgent }}</code>
+      <p v-if="showHeaders" class="m-0 break-all text-cp-xs text-cp-text-secondary">
+        {{ preview.originator }} · Core {{ preview.codexVersion }}
+      </p>
       <p class="m-0 text-cp-xs text-cp-text-tertiary">
-        {{ preview.versionSource === 'custom' ? '固定身份' : '自动更新' }}
+        {{ policy ?? (preview.versionSource === 'custom' ? '固定身份' : '自动更新') }}
         <template v-if="preview.versionSource === 'official'">
           <template v-if="preview.versionLag">
             · 滞后 {{ preview.versionLag }} 版
@@ -43,8 +50,11 @@ defineProps<{
         </template>
       </p>
       <p v-if="preview.error && preview.versionSource !== 'custom'" :title="preview.error" class="m-0 text-cp-sm text-cp-warning">
-        更新失败 · 沿用上次版本
+        {{ preview.versionSource === 'catalog' ? '更新失败 · 沿用已保存身份' : '更新失败 · 沿用上次版本' }}
       </p>
+      <div v-if="$slots.actions" class="flex flex-wrap items-center gap-2">
+        <slot name="actions" />
+      </div>
     </template>
   </div>
 </template>

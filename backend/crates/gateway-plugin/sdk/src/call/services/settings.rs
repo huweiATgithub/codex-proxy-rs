@@ -329,6 +329,12 @@ impl Operation for PreviewClientProfile {
     type Input = (String, Option<serde_json::Map<String, serde_json::Value>>);
     type Output = serde_json::Map<String, serde_json::Value>;
 }
+pub struct RefreshClientProfiles;
+impl Operation for RefreshClientProfiles {
+    const NAME: &'static str = "settings.refresh_client_profiles";
+    type Input = String;
+    type Output = serde_json::Map<String, serde_json::Value>;
+}
 impl From<RuntimeSettings> for ReplaceRuntimeSettings {
     fn from(settings: RuntimeSettings) -> Self {
         Self {

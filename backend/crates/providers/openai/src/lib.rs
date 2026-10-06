@@ -136,6 +136,15 @@ pub async fn initialize(
         ),
     );
     platform_releases.restore().await;
+    let ua_catalog = Arc::new(
+        transport::profile::ua_catalog::UaCatalogService::new(
+            provider_kind.clone(),
+            profile.clone(),
+            ports.catalog_cache(),
+        )
+        .map_err(|_| OpenAiInitializeError::UaCatalog)?,
+    );
+    ua_catalog.restore().await;
     let repository = CodexCredentialRepository::new(Arc::clone(&accounts));
     let websocket_pool = Arc::new(CodexWebSocketPool::with_config(
         config.websocket_pool_config(),
@@ -239,6 +248,7 @@ pub async fn initialize(
             profile_statistics,
             quota: Arc::clone(&quota),
             catalog: Arc::clone(&catalog),
+            ua_catalog: Arc::clone(&ua_catalog),
         },
         websocket_pool,
         desktop_release_status,
@@ -254,6 +264,7 @@ pub async fn initialize(
             desktop: desktop_release,
             cli: cli_release,
             platforms: platform_releases,
+            ua_catalog,
         },
     )
     .map_err(|_| OpenAiInitializeError::Worker)?;
@@ -305,6 +316,8 @@ pub enum OpenAiInitializeError {
     Refresh,
     #[error("OpenAI Desktop release service could not initialize")]
     DesktopRelease,
+    #[error("OpenAI UA catalog service could not initialize")]
+    UaCatalog,
     #[error("OpenAI worker plan is invalid")]
     Worker,
 }
