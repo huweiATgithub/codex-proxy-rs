@@ -283,6 +283,10 @@ where
             "/api/admin/settings/client-profiles/{provider}/preview",
             post(preview_client_profile::<S>),
         )
+        .route(
+            "/api/admin/settings/client-profiles/{provider}/refresh",
+            post(refresh_client_profiles::<S>),
+        )
         .route("/api/admin/settings/update", post(update_settings::<S>))
         .route(
             "/api/admin/settings/client-downloads/codex-desktop/windows",
@@ -667,6 +671,29 @@ where
     ))
 }
 
+async fn refresh_client_profiles<S>(
+    _auth: AdminAuth,
+    Path(provider): Path<String>,
+    State(state): State<S>,
+) -> Result<impl IntoResponse, AdminError>
+where
+    S: SessionState + Send + Sync,
+{
+    let result = state
+        .admin_services()
+        .settings()
+        .refresh_client_profiles(&provider)
+        .await
+        .map_err(map_service_error)?;
+    Ok(AdminResponse::new(
+        StatusCode::OK,
+        AdminEnvelope::ok(client_profile_preview_view(
+            result.into_inner(),
+            crate::time::TimePresenter::new(state.admin_services().timezone()),
+        )),
+    ))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ClientProfilePreviewRequest {
@@ -710,6 +737,24 @@ fn client_profile_preview_view(
     ] {
         let value = time.rfc_display(profile.get(raw).and_then(serde_json::Value::as_str));
         profile.insert(display.to_owned(), serde_json::json!(value));
+    }
+    if let Some(sources) = profile
+        .get_mut("catalog")
+        .and_then(|catalog| catalog.get_mut("sources"))
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for source in sources
+            .iter_mut()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            for (raw, display) in [
+                ("updatedAt", "updatedAtDisplay"),
+                ("checkedAt", "checkedAtDisplay"),
+            ] {
+                let value = time.rfc_display(source.get(raw).and_then(serde_json::Value::as_str));
+                source.insert(display.to_owned(), serde_json::json!(value));
+            }
+        }
     }
     profile
 }
