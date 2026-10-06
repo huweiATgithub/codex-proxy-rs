@@ -84,6 +84,7 @@ pub(crate) struct OpenAiAdminProvider {
     catalog: Arc<CodexCredentialCatalogService>,
     websocket_pool: Arc<CodexWebSocketPool>,
     desktop_release: CodexDesktopReleaseStatus,
+    ua_catalog: Arc<crate::transport::profile::ua_catalog::UaCatalogService>,
 }
 
 pub(crate) struct OpenAiAdminServices {
@@ -92,6 +93,7 @@ pub(crate) struct OpenAiAdminServices {
     pub(crate) profile_statistics: Arc<CodexCredentialProfileService>,
     pub(crate) quota: Arc<CodexCredentialQuotaService>,
     pub(crate) catalog: Arc<CodexCredentialCatalogService>,
+    pub(crate) ua_catalog: Arc<crate::transport::profile::ua_catalog::UaCatalogService>,
 }
 
 impl OpenAiAdminProvider {
@@ -115,6 +117,7 @@ impl OpenAiAdminProvider {
             catalog: services.catalog,
             websocket_pool,
             desktop_release,
+            ua_catalog: services.ua_catalog,
         }
     }
 
@@ -224,6 +227,12 @@ impl ProviderAdmin for OpenAiAdminProvider {
 
     fn provider_kind(&self) -> &ProviderKind {
         &self.provider_kind
+    }
+
+    async fn refresh_client_profiles(&self) -> Result<(), ProviderAdminError> {
+        // 各来源的失败状态随目录返回，其他来源和上次成功记录仍可使用
+        let _ = self.ua_catalog.refresh().await;
+        Ok(())
     }
 
     fn plan_type_display(&self, plan_type: &str) -> String {
