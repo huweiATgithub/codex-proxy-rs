@@ -773,7 +773,8 @@ async fn selected_proxy_location_overrides_global_and_reloads_without_mutating_c
     let provider = provider_with_base_url(&store, "http://upstream.invalid".to_owned());
     let original = json!({"model":"gpt-5.4", "input":[
         {"role":"user", "content":[{"type":"input_text", "text":"<environment_context><timezone>UTC</timezone></environment_context>"}], "internal_chat_message_metadata_passthrough":{"content_item_kinds":["environments.environment_context"], "create_time":1789293131.822}},
-        {"role":"user", "content":[{"type":"input_text", "text":"<environment_context><timezone>UTC</timezone></environment_context>"}], "internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}}
+        {"role":"user", "content":[{"type":"input_text", "text":"<environment_context><timezone>UTC</timezone></environment_context>"}], "internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}},
+        {"role":"user", "content":[{"type":"input_text", "text":"<environment_context><timezone>UTC</timezone></environment_context>"}]}
     ], "tools":[{"type":"web_search"}]});
     let operation = Operation::Generate(GenerateRequest::from_protocol_payload(
         ProtocolPayload::json_object("openai", original.as_object().unwrap().clone())
@@ -797,6 +798,7 @@ async fn selected_proxy_location_overrides_global_and_reloads_without_mutating_c
         let expected = expected.unwrap_or("UTC");
         assert_eq!(body.pointer("/input/0/content/0/text"), Some(&json!(format!("<environment_context><timezone>{expected}</timezone></environment_context>"))));
         assert_eq!(body.pointer("/input/1/content/0/text"), original.pointer("/input/1/content/0/text"));
+        assert_eq!(body.pointer("/input/2/content/0/text"), body.pointer("/input/0/content/0/text"));
         assert_eq!(body.pointer("/input/0/internal_chat_message_metadata_passthrough/create_time"), Some(&json!(1789293131.822)));
     }
     assert_eq!(first_proxy.received_requests().await.unwrap().len(), 2);
@@ -1872,6 +1874,64 @@ async fn provider_should_send_the_request_snapshot_location_to_the_upstream() {
     assert_eq!(
         body.pointer("/input/0/internal_chat_message_metadata_passthrough/create_time"),
         Some(&json!(1789293131.822))
+    );
+}
+
+#[tokio::test]
+async fn provider_should_override_unclassified_environment_timezone_over_websocket() {
+    let store = Arc::new(MemoryAccountStore::default());
+    create_account(&store, "acct_provider_contract").await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let base_url = format!("http://{}", listener.local_addr().expect("address"));
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("accept websocket");
+        let mut socket = accept_codex_test_websocket(socket).await;
+        let message = socket.next().await.expect("request").expect("valid frame");
+        let body: Value = serde_json::from_str(message.to_text().expect("text")).expect("JSON");
+        socket.send(Message::Text(json!({
+            "type": "response.completed",
+            "response": {"id": "resp_location", "model": "gpt-5.4", "status": "completed", "output": []}
+        }).to_string().into())).await.expect("complete response");
+        body
+    });
+    let environment = "<environment_context><cwd>/home/example/项目</cwd><timezone>Asia/Shanghai</timezone></environment_context>";
+    let payload = ProtocolPayload::json_object(
+        "openai",
+        json!({
+            "model": "gpt-5.4",
+            "input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": environment}]}],
+            "tools": [{"type": "web_search"}]
+        }).as_object().expect("request object").clone(),
+    )
+    .expect("payload")
+    .with_context(Map::from_iter([("use_websocket".to_owned(), json!(true))]));
+    let mut stream = provider_with_base_url(&store, base_url)
+        .execute(
+            planned_request(
+                "openai",
+                Operation::Generate(GenerateRequest::from_protocol_payload(payload)),
+            ),
+            context_with_state_owner("req_ws_location", "acct_provider_contract"),
+        )
+        .await
+        .expect("provider stream");
+    while let Some(event) = stream.next().await {
+        event.expect("successful websocket response");
+    }
+    let body = server.await.expect("server");
+    assert_eq!(
+        body.pointer("/input/0/content/0/text"),
+        Some(&json!(
+            environment.replace("Asia/Shanghai", "Pacific/Auckland")
+        ))
+    );
+    assert_eq!(
+        body.pointer("/tools/0/user_location/timezone"),
+        Some(&json!("Pacific/Auckland"))
+    );
+    assert!(
+        body.pointer("/input/0/internal_chat_message_metadata_passthrough")
+            .is_none()
     );
 }
 

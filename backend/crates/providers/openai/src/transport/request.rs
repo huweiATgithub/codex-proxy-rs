@@ -130,7 +130,7 @@ pub(crate) fn align_structured_location_fields(
     now: DateTime<Utc>,
     location: &CodexRequestLocation,
 ) {
-    // 只改写带环境标记的日期和时区；epoch 时间戳保持绝对时间原值
+    // 只改写完整环境上下文的日期和时区；epoch 时间戳保持绝对时间原值
     let current_date = now
         .with_timezone(&location.timezone)
         .format("%Y-%m-%d")
@@ -169,11 +169,10 @@ fn align_environment_context(item: &mut Value, current_date: &str, timezone: &st
         return;
     };
     for (index, part) in content.iter_mut().enumerate() {
-        if content_kinds
-            .as_ref()
-            .and_then(|kinds| kinds.get(index))
-            .and_then(Option::as_deref)
-            != Some(ENVIRONMENT_CONTEXT_CONTENT_KIND)
+        // 官方自定义 Provider 会移除内容分类，缺省时仍按完整环境上下文识别
+        // 已有分类保持权威，不能覆盖显式标为普通文本或其他上下文的内容
+        if let Some(kinds) = &content_kinds
+            && kinds.get(index).and_then(Option::as_deref) != Some(ENVIRONMENT_CONTEXT_CONTENT_KIND)
         {
             continue;
         }

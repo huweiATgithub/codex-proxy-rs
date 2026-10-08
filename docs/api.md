@@ -295,6 +295,10 @@ Codex/OAuth 上游的历史回填按字段形状兼容，不以 User-Agent 品�
 
 请求头过滤不提供客户端匿名化；系统提示词、工具定义、工具结果、工作目录及其他业务 metadata
 保持原有语义，可能包含客户端环境信息。
+环境正文中的工作区路径、shell 和文件权限信息不会因位置覆盖而隐藏。
+turn metadata 的 `workspaces` 也会保留仓库绝对路径、Git 远端地址、提交及工作区变更状态；
+安装身份和账号绑定字段的处理不提供这些信息的脱敏
+
 `client_metadata.parent_response_id` 是 Guardian 的账号内响应引用，只有归属可信且仍为同一账号时保留；
 切号或归属未知时移除。`x-codex-guardian`、`guardian_credits_requested` 和序列化
 `x-codex-turn-metadata` 内普通扩展的同名 `parent_response_id` 保持原样
@@ -755,11 +759,21 @@ API 的 `autoLocation` 默认为 `false`；开启时使用已检测位置，测�
 关联账号的 OpenAI/Codex Responses 请求（HTTP/SSE、WebSocket）优先使用代理位置，否则使用全局
 运行设置中已开启的 `requestLocation`；两者均未开启时保留客户端原有位置和时区。全局覆盖按请求冻结，
 新请求使用保存后的设置，无需重启；代理覆盖在每次执行时读取，
-换号或换出口按该次选定账号解析。位置只影响带来源标记的环境上下文日期/时区和 Web Search 的结构化位置，
-不改变用户普通文本、epoch 时间戳、真实出口 IP、服务或管理端时区、数据驻留约束及 xAI 请求
+换号或换出口按该次选定账号解析。位置只影响环境上下文日期/时区和 Web Search 的结构化位置，
+不改变 epoch 时间戳、真实出口 IP、服务或管理端时区、数据驻留约束及 xAI 请求
+
+环境消息要求 `role: "user"`，文本块为 `type: "input_text"`，完整文本去除首尾空白后由
+`<environment_context>` 与 `</environment_context>` 包围且为合法 XML；只替换根节点直属的
+`current_date` 和 `timezone`。有 `internal_chat_message_metadata_passthrough.content_item_kinds` 数组时，
+仅处理对应分类为 `environments.environment_context` 的文本块；没有分类时，按完整环境上下文识别。
+显式标为 `user.text` 或其他分类的内容、普通聊天中引用的示例、工具结果及无法解析的上下文保持原样。
+客户端实际本机时区不受影响，工具读取本机时区后的输出仍可包含真实值；排查见
+[时区与客户端环境信息](../deploy/README.md#时区与客户端环境信息)
 
 测试经代理并发访问 IPv4 专用端点 `https://api.ipify.org?format=json` 与 IPv6 专用端点 `https://api6.ipify.org?format=json`，
 分别验证并记录双栈出口（IPv4 与 IPv6 地址），在任一地址族可用时即判定连接成功。超时 15 秒，每进程最多同时测试 4 条。
+解析位置时还会向 `https://ipwho.is/<出口 IP>` 查询地理位置，出口 IP 会发送给该第三方服务；
+自定义位置和时区不改变这些探测请求
 探测器复用 OpenAI 的证书信任配置：优先读取非空的 `CODEX_CA_CERTIFICATE`，
 其次读取 `SSL_CERT_FILE`，并保留系统根证书；证书配置错误不会回退为不验证证书。
 出口测试结果仅供诊断，不限制代理的选择和绑定；未测试或测试失败的代理仍可使用。
