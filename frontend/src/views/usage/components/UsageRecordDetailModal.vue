@@ -13,6 +13,7 @@ import {
   usageLatencyDetails,
   usageModelDisplay,
   usageReasoningEffort,
+  usageTokenDetails,
   usageTransportType,
   usageUserAgent,
 } from '@/components/usage/shared/presenter'
@@ -37,7 +38,7 @@ const responseText = computed(() => props.record ? visibleResponseText(props.rec
 const modelDisplay = computed(() => props.record
   ? usageModelDisplay(props.record)
   : { primary: '—', secondary: '' })
-const tokenDetails = computed(() => props.record ? props.record.tokenDetails : null)
+const tokenDetails = computed(() => props.record ? usageTokenDetails(props.record.tokenDetails) : null)
 const billing = computed(() => props.record ? props.record.billing : null)
 const latencyDetails = computed(() => props.record ? usageLatencyDetails(props.record) : null)
 

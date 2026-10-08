@@ -1,5 +1,5 @@
-import type { UsageListRecord, UsageRecordDetail } from '@/api'
-import { formatCompactNumber, formatDuration } from '@/utils/format'
+import type { UsageListRecord, UsageRecordDetail, UsageTokenDetails } from '@/api'
+import { formatCompactNumber, formatDuration, formatInteger } from '@/utils/format'
 
 // 列表与详情使用独立读模型，展示函数只依赖两者的公共字段。
 type UsageCommonRecord = UsageListRecord | UsageRecordDetail
@@ -7,6 +7,23 @@ type UsageLatencyRecord = Pick<UsageCommonRecord, 'latencyDetails' | 'firstToken
 
 export type UsagePerformanceRecord = UsageLatencyRecord & {
   tokenDetails: Pick<UsageListRecord['tokenDetails'], 'outputTokens'> | null
+}
+
+export function usageFreshInputTokens(input: number, cached: number, written: number) {
+  // 输入总量包含缓存读写，普通输入与缓存明细分开展示
+  return Math.max(0, input - cached - written)
+}
+
+export function usageTokenDetails(details: UsageTokenDetails): UsageTokenDetails {
+  const inputTokens = details.inputTokens === null
+    ? null
+    : usageFreshInputTokens(details.inputTokens, details.cachedTokens ?? 0, details.cacheWriteTokens ?? 0)
+
+  return {
+    ...details,
+    inputTokens,
+    inputTokensDisplay: inputTokens === null ? details.inputTokensDisplay : formatInteger(inputTokens),
+  }
 }
 
 export function usageTransportType(transport?: string | null) {
