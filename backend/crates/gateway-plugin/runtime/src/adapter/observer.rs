@@ -34,6 +34,7 @@ use crate::{RpcSession, adapter::scope::BindingScope};
 const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(2);
 const OBSERVATION_ENVELOPE_RESERVE: usize = 16 * 1024;
 
+#[derive(Clone)]
 pub(crate) struct ObserverEntry {
     order: i32,
     plugin_id: String,

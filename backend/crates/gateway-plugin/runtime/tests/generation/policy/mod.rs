@@ -3,6 +3,7 @@
 mod compatibility;
 mod facts;
 mod http;
+mod lifecycle;
 mod mounts;
 mod service;
 mod websocket;
