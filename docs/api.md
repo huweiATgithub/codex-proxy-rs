@@ -395,6 +395,8 @@ Codex 专用目录中的 `context_window` 与 `max_context_window` 分别表示�
 
 ### 透传与错误恢复
 
+#### OpenAI 透传
+
 OpenAI 路径保留客户端 Responses wire 语义：请求 body 的未知字段和字段顺序保持不变（受控模型
 映射除外），HTTP SSE 与 WebSocket 的上游业务事件除下述客户端错误兼容外按原始字节转发，
 response ID 按 opaque 值处理而不假设 UUID 或固定长度；除客户端错误兼容与原生续写额度恢复外，
@@ -404,31 +406,29 @@ Images 请求不读取或重建 JSON，也不要求或映射模型字段；
 只在原始字节之外完成账号选择、鉴权头替换和端点路由，成功与非容量失败响应正文保持原始字节。
 `/v1/alpha/search` 使用相同的 OpenAI Provider 原生端点边界：body（包括 `model`）不解析、不映射，
 `x-codex-turn-metadata` 在移除客户端账号身份并按当前 lease 重写 installation ID 后转发；上游账号
-Authorization、Cookie、account ID、originator 和 User-Agent 均由代理安全重建。xAI 是 Grok wire 与
-Responses wire 之间的协议转换层，转换只在 xAI Provider 内完成。
-上游结构化错误的 message/code/type 按上述边界交付客户端，其中内嵌的账号指纹 UUID 已脱敏。模型映射是
-全局精确映射，未命中时模型名原样交给候选 Provider；分组只限定账号集合，不参与模型改名
+Authorization、Cookie、account ID、originator 和 User-Agent 均由代理安全重建。
+模型映射是全局精确映射，未命中时模型名原样交给候选 Provider；分组只限定账号集合，不参与模型改名
 
-xAI 编码器同样保留路由选定的完整模型名，不内置 `grok`、`grok-latest` 等旧型号别名，也不剥离模型前缀；
-需要别名时使用显式模型映射。目录读取失败按错误处理，不用硬编码旧型号补全能力
+#### xAI 适配
+
+xAI Provider 将 Grok wire 转换为 Responses wire。上游结构化错误的 message/code/type 可透出，内嵌的账号指纹 UUID 脱敏。
+模型名完整保留，不剥离前缀；别名使用显式模型映射。目录读取失败返回错误，不用硬编码型号补全能力
 
 xAI 的 `reasoning.effort` 接受 `none / minimal / low / medium / high / xhigh / max`，去除两端
 空白并转为小写后保留档位，不按模型名称降档或删除；模型是否支持该选择由上游判断。
 未知值或错误类型返回字段错误，其他 reasoning 字段保留。`web_search.filters` 支持
 `allowed_domains` 与 `excluded_domains`，两者不能同时为非空；客户端函数与托管搜索工具
-同名时使用内部别名，并在返回工具调用时还原客户端名称。搜索工具的旧顶层 `allowed_domains`
-不再映射到 filters，直接返回请求错误
+同名时使用内部别名，并在返回工具调用时还原客户端名称。搜索工具顶层的 `allowed_domains` 不受支持，返回请求错误
+
+#### 容量拒绝与重试
 
 OpenAI 明确返回 `server_is_overloaded`、`slow_down` 或模型容量不足错误时，代理在允许安全重放且
 尚未交付输出的前提下，先做最多 3 次同账号重试，再通过现有调度换号。没有有效服务器建议时，
 按 500ms 起步的指数退避等待，单次最多 8 秒；有效 `Retry-After` 优先，接受秒数、HTTP 日期和零延迟，
 不受本地退避上限截断。流内失败事件使用相同解析规则，WS 转 HTTP 回退也遵守服务器建议；
 等待受请求截止时间和取消约束，重试受请求总尝试次数约束。
-`server_is_overloaded`、`slow_down` 等可计分的结构化错误按已发送的失败尝试计入 Smart 账号
-健康分。已确认容量拒绝的平滑权重为 0.4，其他可计分失败与成功样本保持 0.2。
-失败率使用账号级平滑与时间衰减，影响后续普通选路，已有可用账号的
-会话亲和仍优先。容量不足不触发 Provider 全局熔断，也不作为账号额度耗尽；启用账号自动冻结时，
-达到容量失败阈值会另外写入临时冷却。
+已发送的容量失败计入[智能调度健康分](architecture.md#智能调度)，可用账号的会话亲和优先。
+容量不足不触发 Provider 全局熔断，也不作为账号额度耗尽；启用账号自动冻结且达到阈值时写入临时冷却。
 客户端错误兼容由 API 编码出口统一处理：最终交付的 `server_is_overloaded`、`slow_down` 错误码
 投影为 `server_error`，HTTP 错误状态及 WS 包装错误的数字状态投影为 `503`，让客户端执行自己的
 有界重试。Provider 已确认容量不足的初始失败，即使没有这两个错误码，也返回 `503`。
@@ -436,9 +436,11 @@ SSE/WS 的 `response.failed` 保留原消息、响应 ID 与其他业务字段�
 继续按现有规则投影为 `response.failed`。`Retry-After` 等允许下发的响应头保留，
 其他错误码不受影响。内部上游状态、错误码、原始事件及计量事实保持不变；已开始输出的请求由
 客户端决定如何恢复，代理不因此重放已提交的请求。
-明确额度耗尽触发账号隔离与安全换号，
-包括 WebSocket 握手返回的 429；不会因其长 `Retry-After` 而转入同账号传输恢复等待。
 `flex_unavailable` 是当前请求的终止拒绝，保留原始错误，不自动重试、切换传输或冷却账号
+
+#### 额度耗尽与续写
+
+明确额度耗尽触发账号隔离与安全换号，包括 WebSocket 握手返回的 429；不会因其长 `Retry-After` 而转入同账号传输恢复等待
 
 OpenAI 选号阶段确认本次可选账号全部额度耗尽时，HTTP 返回 `429`，WebSocket 错误帧返回
 `status: 429`，两者的 `error.type` 与 `error.code` 均为 `usage_limit_reached`，提示客户端停止
@@ -1309,52 +1311,33 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 并发修改导致版本过期时返回 `409`，不保存当前请求；读取最新设置并确认差异后再提交，不能静默重试覆盖。
 成功响应返回新版本，后续请求使用发布后的快照
 
-设置更新字段包括：
+设置更新字段按用途分组如下：
 
-```text
-configRevision
-providerRequestProfiles
-openaiClientProfile
-xaiClientProfile
-requestLocationEnabled
-requestLocation
-modelMappings
-refreshMarginSeconds
-refreshConcurrency
-maxConcurrentPerAccount
-maxWaitingPerKey
-maxWaitingPerAccount
-openaiGuardianReservedConcurrency
-openaiAccountAffinity
-openaiSessionAffinityTtlHours
-maxAccountRotations
-concurrencyWaitTimeoutSeconds
-responsesMaxDecompressedBodyBytes
-requestIntervalMs
-rotationStrategy
-smartScheduling
-minCodexDesktopVersion
-minCodexCliVersion
-usageRetentionDays
-opsEventRetentionDays
-auditRetentionDays
-accountAutoFreezeEnabled
-accountAutoFreezeThreshold
-accountAutoFreezeWindowSeconds
-accountAutoFreezeDurationSeconds
-accountAutoFreezeProbeEnabled
-accountAutoFreezeProbeModel
-accountAutoFreezeAdaptiveConcurrency
-accountWarmupEnabled
-accountWarmupScheduleTime
-accountWarmupModel
-```
+| 用途 | 字段 |
+| --- | --- |
+| 并发控制版本 | `configRevision` |
+| [客户端身份](#provider-客户端身份) | `providerRequestProfiles`、`openaiClientProfile`、`xaiClientProfile` |
+| [请求位置](#请求位置) | `requestLocationEnabled`、`requestLocation` |
+| 模型映射 | `modelMappings` |
+| 凭据刷新 | `refreshMarginSeconds`、`refreshConcurrency` |
+| [并发与排队](#并发与排队) | `maxConcurrentPerAccount`、`maxWaitingPerKey`、`maxWaitingPerAccount`、`openaiGuardianReservedConcurrency`、`concurrencyWaitTimeoutSeconds`、`requestIntervalMs` |
+| [亲和与换号](#账号亲和与换号) | `openaiAccountAffinity`、`openaiSessionAffinityTtlHours`、`maxAccountRotations` |
+| [调度策略](#智能调度) | `rotationStrategy`、`smartScheduling` |
+| [请求解压](#请求解压上限) | `responsesMaxDecompressedBodyBytes` |
+| [客户端门禁](#1-鉴权与公共约定) | `minCodexDesktopVersion`、`minCodexCliVersion` |
+| 历史保留 | `usageRetentionDays`、`opsEventRetentionDays`、`auditRetentionDays` |
+| [账号自动冻结](#账号自动冻结) | `accountAutoFreezeEnabled`、`accountAutoFreezeThreshold`、`accountAutoFreezeWindowSeconds`、`accountAutoFreezeDurationSeconds`、`accountAutoFreezeProbeEnabled`、`accountAutoFreezeProbeModel`、`accountAutoFreezeAdaptiveConcurrency` |
+| [账号预热](#账号预热) | `accountWarmupEnabled`、`accountWarmupScheduleTime`、`accountWarmupModel` |
+
+### 账号预热
 
 定时账号预热默认关闭。`accountWarmupScheduleTime` 使用部署时区中的 `HH:MM`，
 多个时段以逗号分隔，默认 `08:00`；`accountWarmupModel` 默认 `null`，开启前必须显式选择模型。
 任务面向可用的 OpenAI OAuth 账号，跳过周额度耗尽及五小时窗口距离重置仍超过 30 分钟的账号。
 不存在的本地时刻跳过，重复时刻只执行较早一次；执行进度跨重启保留，时钟回拨不补跑已领取时刻之前的时段。
 只有收到响应成功终态才记为预热成功；预热不计入客户端业务用量
+
+### 请求位置
 
 `requestLocationEnabled` 是必填布尔值，默认 `false`：关闭时不覆盖客户端原有位置和时区；开启时使用已保存的
 `requestLocation`。关闭不会清空自定义值，代理自定义位置仍优先。
@@ -1363,6 +1346,8 @@ accountWarmupModel
 字段约束与[代理位置](#独立代理管理--managed-proxies)一致。全局自定义开启后，OpenAI Responses 使用全局位置，
 关联代理配置了自定义位置时优先使用代理值。保存后通过现有配置发布机制对新请求生效，
 已开始请求及其重试保持同一份全局值；普通文本、绝对时间戳和数据驻留要求不受影响
+
+### 并发与排队
 
 `maxConcurrentPerAccount` 是默认账号并发上限，取值 0～4294967295；`0` 表示不限制。
 账号的 `concurrencyLimit: null` 继承该默认值，单独设置的正数上限仍优先生效。
@@ -1384,7 +1369,9 @@ Guardian 以 `subagent_kind` 或 `client_metadata.x-openai-subagent` 值 `guardi
 不受普通队列位置或单账号排队上限约束，仍受自身队列总等待容量与等待时限约束。
 两类请求仍遵守账号最小请求间隔、可用性和 Client Key 限额。设置更新请求须包含该字段
 
-`openaiAccountAffinity` 控制 OpenAI 账号亲和，默认 `strict`（严格），已有保存的模式保持不变：
+### 账号亲和与换号
+
+`openaiAccountAffinity` 控制 OpenAI 账号亲和，默认 `strict`（严格）：
 
 - `relaxed`（宽松）：会话内请求直接按 `rotationStrategy` 选号，不优先主账号
 - `preferred`（优先）：会话内所有可关联请求优先主账号，并发已满、请求间隔未到、额度耗尽、停用、限流冷却或不支持当前模型时临时分流，保留会话绑定，后续请求仍优先主账号
@@ -1402,13 +1389,16 @@ Guardian 以 `subagent_kind` 或 `client_metadata.x-openai-subagent` 值 `guardi
 提高该值允许请求尝试更多账号，但不放宽安全重放或交付后的重试限制。
 设置更新请求须包含账号亲和、亲和时长与最大换号次数，保存后对新请求生效，执行中请求及其重试沿用冻结值
 
+### 请求解压上限
+
 `responsesMaxDecompressedBodyBytes` 是压缩 Responses HTTP 请求的解压输出上限，单位字节，默认
 67108864（64 MiB）。必须为正整数，且可表示为进程平台的 `isize`；管理端以整数 MiB 编辑。
 保存并发布成功后，新请求使用新值；已鉴权请求沿用原快照，无需重启。调高上限会增加大请求的内存占用，
 它不代表整个进程的内存预算
 
-`rotationStrategy` 可取 `smart`、`quota_reset_priority`、`round_robin`、`sticky`。
-两个 `minCodex*Version` 字段为 `string | null`，只设置最低版本，不存在最大版本字段
+### 智能调度
+
+`rotationStrategy` 可取 `smart`、`quota_reset_priority`、`round_robin`、`sticky`
 
 `smartScheduling` 是必填的完整对象，仅在内置 `smart` 策略下生效，切换其他策略时仍保存其值：
 
