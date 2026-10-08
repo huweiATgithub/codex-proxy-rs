@@ -159,6 +159,7 @@ async fn connect_and_migrate_should_apply_all_migrations_once_and_reopen_cleanly
             "client_api_keys",
             "client_key_budget_windows",
             "client_key_charge_events",
+            "model_request_observations",
             "model_requests",
             "ops_events",
             "outbound_proxies",
@@ -187,14 +188,7 @@ async fn connect_and_migrate_should_apply_all_migrations_once_and_reopen_cleanly
     assert_eq!(response_id_types, ["bytea", "bytea"]);
     assert!(!raw_response_id_index_exists);
     assert!(!legacy_key_provider_column_exists);
-    assert_eq!(
-        routing_history_columns,
-        [
-            "routing_group_names_snapshot",
-            "routing_group_refs",
-            "routing_scope",
-        ]
-    );
+    assert!(routing_history_columns.is_empty());
 }
 
 #[test]

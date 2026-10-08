@@ -56,8 +56,9 @@ const overviewItems = computed(() => [
   { label: '客户端传输', value: usageTransportType(props.record?.clientTransport), mono: true },
   { label: '上游传输', value: usageTransportType(props.record?.upstreamTransport), mono: true },
   { label: '总耗时', value: props.record?.latencyMsDisplay, mono: true },
+  { label: '上游耗时', value: latencyDetails.value?.upstreamDisplay ?? '—', mono: true },
   {
-    label: latencyDetails.value?.firstOutputLabel ?? '首字',
+    label: '首个输出等待',
     value: latencyDetails.value?.firstOutputDisplay ?? '—',
     mono: true,
   },

@@ -22,7 +22,8 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::protocol::responses::{
-    ResponseEventSignals, ResponsesSseFailure, response_event_signals,
+    ResponseEventSignals, ResponseTimingMetrics, ResponsesSseFailure, response_duration_ms,
+    response_event_signals,
 };
 use super::usage::{
     OpenAiBillingUsage, WebSearchPricing, normalize_service_tier, web_search_pricing,
@@ -49,6 +50,8 @@ pub struct CodexCanonicalDecoder {
     semantic_output_seen: bool,
     requested_service_tier: Option<String>,
     response_service_tier: Option<String>,
+    upstream_response_ms: Option<u64>,
+    upstream_timing_metrics: ResponseTimingMetrics,
     response_model: ResponseModelObservation,
     reported_model: Option<String>,
     web_search_pricing: Option<WebSearchPricing>,
@@ -158,6 +161,8 @@ impl CodexCanonicalDecoder {
             semantic_output_seen: false,
             requested_service_tier: None,
             response_service_tier: None,
+            upstream_response_ms: None,
+            upstream_timing_metrics: ResponseTimingMetrics::default(),
             response_model: ResponseModelObservation::default(),
             reported_model: None,
             web_search_pricing: None,
@@ -239,6 +244,16 @@ impl CodexCanonicalDecoder {
     #[must_use]
     pub fn response_service_tier(&self) -> Option<&str> {
         self.response_service_tier.as_deref()
+    }
+
+    /// 返回当前 attempt 的官方响应耗时，缺少完成响应时间戳时保留未知
+    #[must_use]
+    pub const fn upstream_response_ms(&self) -> Option<u64> {
+        self.upstream_response_ms
+    }
+
+    pub(crate) const fn upstream_timing_metrics(&self) -> ResponseTimingMetrics {
+        self.upstream_timing_metrics
     }
 
     /// 真实 HTTP 响应头提供初始报告；流内请求级报告可覆盖它
@@ -326,6 +341,16 @@ impl CodexCanonicalDecoder {
             // HTTP 传输已将此控制帧投影为本地额度事实
             // 此帧不能成为客户端输出，也不能启动首个输出计时
             return Ok(());
+        }
+        if event_type == Some("responsesapi.websocket_timing") && self.started && !self.completed {
+            // 无 ID 的官方计时帧仅属于当前已开始的响应，复用连接的尾帧不能跨边界归属
+            let response_id = value
+                .get("response_id")
+                .or_else(|| value.pointer("/response/id"));
+            if response_id.is_none_or(|id| id.as_str() == self.response_id.as_deref()) {
+                self.upstream_timing_metrics
+                    .merge(ResponseTimingMetrics::from_event(&value));
+            }
         }
         self.observe_response_service_tier(&value);
         self.response_model.observe(event_type, &value);
@@ -885,6 +910,9 @@ impl CodexCanonicalDecoder {
         if !self.started || self.response_id.as_deref() != Some(response_id.as_str()) {
             self.completed = true;
             return Ok(());
+        }
+        if event_type == "response.completed" {
+            self.upstream_response_ms = response_duration_ms(value);
         }
         if let Some(items) = response.get("output").and_then(Value::as_array) {
             for (output_index, item) in items.iter().enumerate() {

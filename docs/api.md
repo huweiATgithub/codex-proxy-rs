@@ -594,7 +594,7 @@ overview 返回 `asOf`、`asOfDisplay`、`startTime`、`endTime`、`key`、`summ
 
 日志只返回时间、公开请求模型、推理强度、接口、上下游传输方式、当前请求的 IP / User-Agent、
 Token 明细、费用明细、用时/首字与状态。Token 和费用复用现有展示合同；延迟仅包含当前请求的首事件、
-首推理、首文本和总耗时，不含账号容量或调度诊断。
+首推理、首文本、总耗时与上游性能指标，口径见[记录范围与统计口径](#记录范围与统计口径)，不含账号容量或调度诊断。
 成功记录的 `status` 为 `success`，不伪造未保存的 HTTP 状态；错误记录为 `error`，只返回客户端状态码，
 缺失的 Token/费用明细为 null。不返回账号资料、Key ID、上游模型或请求标识、原始错误正文或诊断内容
 
@@ -1798,14 +1798,39 @@ OpenAI 优先采用服务端 `openai-model` / `x-openai-model` 报告（流内�
 
 `latencyMs` 从模型执行会话开始计到终结，包含账号选择、重试及流交付等待，不包含此前的入口解析、路由和准入。
 `firstTokenLatencyMs` 与它使用同一计时起点，首字边界由 Provider 协议定义。
-OpenAI Responses 采用首个非前导输出事件，包含 `response.output_item.added` 等结构事件，
-跳过 `response.created`、`response.in_progress`、心跳、额度控制和失败事件；xAI 采用首个语义输出。
+OpenAI Responses 采用官方 Codex 的首个 `response.output_item.added` 边界；
+xAI 采用首个非空文本、推理或工具参数输出。对应事件缺失时保留未知，不用其他事件补齐首字。
+请求级首字统一通过 `firstTokenLatencyMs` 返回，由前端格式化。
 `latencyDetails` 的首事件、首推理和首正文时间也使用请求级起点，首推理与首正文仍要求实际内容，
 连接、响应头等传输阶段耗时独立计量，不能直接相加作为总耗时
 
-列表与性能统计的输出速率为 `outputTokens × 1000 / latencyMs`，只在输出 Token 和总耗时为正时计算，
-不依赖首字是否采集。输出 Token 保留上游用量口径，OpenAI 的输出已包含推理 Token，不重复相加或扣除。
-该值表示完整请求期间的平均输出速率，包含选号、重试、推理与流交付等待，不表示模型内部的纯解码速度
+`latencyDetails.upstreamResponseMs` 是上游返回的本次响应耗时，与网关请求计时独立。
+OpenAI 仅使用同一条 `response.completed` 中的 `created_at` 与 `completed_at` 时间差，
+将秒转换为毫秒保存，不拼接前导事件、会话累计计时或本地观测。
+字段缺失、时间倒序或时间跨度为零时保持缺失；未采集官方计时的记录不会用网关耗时补齐。
+返回整数秒时间戳时，短请求受秒级取整影响，不能用毫秒单位推断来源具有毫秒精度
+
+`latencyDetails` 还可包含以下上游性能指标，单位为毫秒，保留上游返回的小数。
+OpenAI 从当前响应的 `responsesapi.websocket_timing.timing_metrics` 读取，
+WebSocket 握手默认请求专项计时，客户端显式提供的开关保留原值。
+各字段独立可选；响应开始前、终态后的计时和明确属于其他响应的事件不写入当前请求，重试时清空
+
+| 字段 | 上游口径 |
+| --- | --- |
+| `upstreamApiOverheadMs` | API 排除引擎与客户端工具时间后的耗时 |
+| `upstreamEngineMs` | Engine Service 总耗时 |
+| `upstreamEngineIapiTtftMs` | Engine IAPI TTFT 总计 |
+| `upstreamEngineServiceTtftMs` | Engine Service TTFT 总计 |
+| `upstreamEngineIapiTbtMs` | 跨引擎调用的 IAPI Token 间隔 |
+| `upstreamEngineServiceTbtMs` | 跨引擎调用的 Service Token 间隔 |
+
+以上指标按上游内部口径展示，不相加重建总耗时，不替换请求级 `firstTokenLatencyMs`。
+它们仅补充性能诊断，不改变列表与聚合统计的速率分母
+
+列表与性能统计的速率为 `outputTokens × 1000 / upstreamResponseMs`，只在两者为正时计算。
+输出 Token 保留上游用量口径，OpenAI 的输出已包含推理 Token，不重复相加或扣除。
+该值表示上游响应创建到完成期间的平均输出速率，按官方时间戳精度计算，
+不表示模型内部的纯解码速度，也不用于替代网关观测的首个输出等待与请求总耗时
 
 ### 诊断与恢复关联
 

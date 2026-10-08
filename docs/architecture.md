@@ -840,11 +840,22 @@ OpenAI 订阅周期属于按需个人信息，不是额度事实。Admin 账号�
 
 ### 请求记录与交付
 
+Provider 独占首事件、首字、首推理和首正文的观测，以及上游计时的协议解析，通过类型化响应观测交给 Core。
+Core 只接收这些事实并记录请求总耗时，不从 canonical 事件补记输出计时；
+未观测到的时间保持未知，各 Provider 的首字边界见 [记录范围与统计口径](api.md#记录范围与统计口径)
+
 请求观测通过有界进程内队列异步投影到 PostgreSQL。普通额度之外预留四分之一容量给失败与请求生命周期记录，
 进度更新不能消耗预留；同一请求仍按入队顺序写入。容量耗尽、Store 暂不可用或进程退出超时时，
 观测记录可能丢失并累计指标，拥堵与写入失败告警按累计计数限频，不改变客户端响应。
 Usage 详情中的 attempt 因此是 best-effort，并通过
 `attemptsComplete: false` 明示不完整性
+
+`model_requests` 保留身份、生命周期、业务检索、用量和费用列；请求与账号快照、路由展示信息、
+计时、调度、传输、响应和恢复耗时存入受类型与完整性约束的 `request_observation_json`，不另存同义列。
+Store 按生命周期原子更新所属分组，保留其他阶段的事实；查询通过 `model_request_observations`
+集中提取类型化字段，Admin 与 API 不依赖数据库 JSON 路径。官方计时与本地计时分别归入
+`timings.upstream` 和 `timings.local`，缺失保持未知；原始错误、Provider metadata、费用快照及
+诊断轨迹仍按各自合同独立保存
 
 `model_requests.deadline_at` 是异常回收租约的到期时间，运行会话持续刷新，且不超过显式执行截止。
 进程退出后停止刷新，Worker 按过期租约收敛遗留的 running 记录；该观测续期失败不取消客户端执行

@@ -1093,7 +1093,14 @@ pub(super) fn cold_response_stream(response: ColdResponse) -> EventStream {
             let timing_signals = decoder.take_timing_signals();
             let output_timing_changed = observation_state
                 .observe_timing_signals(timing_signals, context.timing_started_at());
-            let timing_changed = first_event_changed || output_timing_changed;
+            let upstream_timing_changed = observation_state
+                .observe_upstream_response_ms(decoder.upstream_response_ms());
+            let upstream_metrics_changed = observation_state
+                .observe_upstream_timing_metrics(decoder.upstream_timing_metrics());
+            let timing_changed = first_event_changed
+                || output_timing_changed
+                || upstream_timing_changed
+                || upstream_metrics_changed;
             let completed = events
                 .iter()
                 .flat_map(ProviderEvent::canonical_facts)
@@ -1204,8 +1211,15 @@ pub(super) fn cold_response_stream(response: ColdResponse) -> EventStream {
             .observe_upstream_response_model(decoder.response_model());
         let service_tier_changed = observation_state
             .observe_upstream_service_tier(decoder.response_service_tier());
-        let timing_changed = observation_state
+        let output_timing_changed = observation_state
             .observe_timing_signals(timing_signals, context.timing_started_at());
+        let upstream_timing_changed = observation_state
+            .observe_upstream_response_ms(decoder.upstream_response_ms());
+        let upstream_metrics_changed = observation_state
+            .observe_upstream_timing_metrics(decoder.upstream_timing_metrics());
+        let timing_changed = output_timing_changed
+            || upstream_timing_changed
+            || upstream_metrics_changed;
         let updates = take_rate_limit_updates(rate_limit_updates.as_ref()).await;
         let rate_limits_changed = if updates.is_empty() {
             false

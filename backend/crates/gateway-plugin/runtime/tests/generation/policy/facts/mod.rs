@@ -99,6 +99,8 @@ async fn facts_are_readable_without_replacing_or_duplicating_the_original_execut
             )
             .with_timings(ProviderResponseTimings {
                 headers_ms: Some(19),
+                upstream_response_ms: Some(7_000),
+                upstream_engine_iapi_tbt_ms: Some(2.450638),
                 ..Default::default()
             }),
     );
@@ -184,6 +186,14 @@ async fn facts_are_readable_without_replacing_or_duplicating_the_original_execut
         "{\"private_field\":\"kept\"}"
     );
     assert_eq!(facts["observation"]["timings"]["headers_ms"], 19);
+    assert_eq!(
+        facts["observation"]["timings"]["upstream_engine_iapi_tbt_ms"],
+        2.450638
+    );
+    assert_eq!(
+        facts["observation"]["timings"]["upstream_response_ms"],
+        7_000
+    );
     assert_eq!(
         facts["session_update"]["payload"]["cursor"],
         "private-cursor"

@@ -163,6 +163,12 @@ impl CodexBackendClient {
         context: CodexRequestContext<'_>,
     ) -> CodexClientResult<HeaderMap> {
         let mut headers = self.response_headers(request, context)?;
+        if !headers.contains_key("x-responsesapi-include-timing-metrics") {
+            headers.insert(
+                HeaderName::from_static("x-responsesapi-include-timing-metrics"),
+                HeaderValue::from_static("true"),
+            );
+        }
         headers.insert(
             HeaderName::from_static("openai-beta"),
             HeaderValue::from_static("responses_websockets=2026-02-06"),
@@ -321,6 +327,7 @@ fn websocket_header_order(name: &str) -> usize {
         "x-codex-turn-metadata",
         "x-codex-routing-hint",
         "openai-beta",
+        "x-responsesapi-include-timing-metrics",
         "originator",
         "user-agent",
         "authorization",
