@@ -274,10 +274,14 @@ SSE 注释保活用于防止传输链路空闲断开，不会重置 Codex 等待
 
 ## 客户端配置
 
-在管理端创建客户端密钥，打开「使用密钥」，按操作系统复制 `config.toml` 和 `auth.json`，
-或通过 CCSwitch 导入。已有文件先备份，合并后完全退出并重启 Codex。
-CCSwitch 导入同时配置当前 Key 的日／周额度查询，当前 Provider 默认每 30 分钟刷新。
-查询地址和凭据随导入生成，在 CCSwitch 中修改 Provider 的地址或 Key 后，需重新导入以同步用量查询
+在管理端创建客户端密钥，打开「使用密钥」，按操作系统复制 `config.toml`。
+已有配置先备份，合并后完全退出并重启 Codex。代理密钥由 Provider 配置提供，
+不需要另写 `auth.json`，已有官方登录文件可以保留
+
+CC Switch 4.0.4 的一键导入包含连接信息和当前 Key 的日／周额度查询，默认每 30 分钟刷新。
+查询地址和凭据随导入生成，在 CC Switch 中修改 Provider 的地址或 Key 后，需重新导入以同步用量查询。
+导入不包含下方模板的原生生图和 WebSocket 设置。需要原生生图时，使用下方配置直连 CPR，
+避免 CC Switch 切换或接管后重写 Provider 配置
 
 Linux/macOS 默认目录为 `~/.codex/`，Windows 为 `%USERPROFILE%\.codex\`；
 设置过 `CODEX_HOME` 时以该目录为准。Provider 设置应写入用户配置，不要只写到项目目录。
@@ -319,18 +323,6 @@ goals = true
 需要指定完整模型目录时，在账号的模型列表中导出所选 Codex 模型，并在 `config.toml` 顶层设置
 `model_catalog_json = "/absolute/path/to/cpr-model-catalog.json"`。导出文件不含账号凭据；
 它是一次目录快照，调整选择或上游模型能力变化后需重新导出
-
-### auth.json
-
-```json
-{
-  "OPENAI_API_KEY": "<client-api-key>"
-}
-```
-
-使用 `auth.json` 读取密钥的客户端或 CCSwitch 可保留这份文件。上述 Provider 配置从
-`experimental_bearer_token` 读取代理密钥，可与仅含 API Key 的 `auth.json` 共存。
-真实 OpenAI OAuth 账号文件用于管理端账号导入，不要当作代理配置分发给客户端
 
 ### 生图和 WebSocket
 
@@ -398,6 +390,8 @@ metrics_exporter = "none"
 - 仍提示登录：确认实际读取的用户配置目录、选中的 Provider 和客户端版本，再完全退出重启。
   新 Provider 使用 `requires_openai_auth = false`，不依赖本地 ChatGPT 登录
 - 没有生图工具：检查配置是否被覆盖、Actor 标记是否保留、模型是否支持图片输入。
+  CC Switch 4.0.4 的一键导入不保留 Actor 标记，配置写入时还可能重算 `requires_openai_auth`，
+  不能只检查 CPR 导出的模板，需要核对 Codex 实际读取的 Provider 配置。
   官方客户端还会检查缓存登录状态；已核验版本在本地账号为 Free 时会隐藏生图。
   先备份并区分本地真实账号文件与代理密钥文件，不要直接删除全部登录状态
 - 已调用生图但失败：查看服务端账号的凭据、权限、额度和请求错误，不能只凭文本对话成功判断
