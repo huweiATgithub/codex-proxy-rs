@@ -715,6 +715,7 @@ impl ProviderLeasePort for TestLeases {
         _: &'a gateway_core::policy::ClientApiKeyId,
         _: &'a gateway_core::routing::ProviderKind,
         accounts: &'a [ProviderAccountId],
+        _pool: gateway_core::provider_ports::ProviderConcurrencyPool,
     ) -> BoxFuture<
         'a,
         Result<gateway_core::provider_ports::ProviderSchedulingState, ProviderStoreError>,
@@ -1255,6 +1256,7 @@ mod errors {
             _: &'a ClientApiKeyId,
             _: &'a ProviderKind,
             _: &'a [ProviderAccountId],
+            _pool: gateway_core::provider_ports::ProviderConcurrencyPool,
         ) -> BoxFuture<
             'a,
             Result<gateway_core::provider_ports::ProviderSchedulingState, ProviderStoreError>,

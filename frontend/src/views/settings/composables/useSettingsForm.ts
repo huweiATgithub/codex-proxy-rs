@@ -227,7 +227,7 @@ export function useSettingsForm() {
       return
     }
     if (!Number.isInteger(openaiGuardianReservedConcurrency) || openaiGuardianReservedConcurrency < 0 || openaiGuardianReservedConcurrency > 4294967295) {
-      toast.warning('自动审批预留并发应为 0～4294967295 的整数，0 表示关闭')
+      toast.warning('自动审批独立并发应为 0～4294967295 的整数，0 表示共用普通并发')
       return
     }
     if (responsesMaxDecompressedBodyMiB === null || !Number.isInteger(responsesMaxDecompressedBodyMiB) || responsesMaxDecompressedBodyMiB < 1

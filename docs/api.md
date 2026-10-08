@@ -644,7 +644,7 @@ config 返回 `{ name, plaintextKey }`，仅读取服务端会话绑定的当前
 - `sortBy`: `email`、`status`、`planType`、`usage`、`lastUsedAt`、`expiresAt`
 - `sortDirection`: `asc`、`desc`
 
-账号视图的 `capacity` 返回查询时的网关并发容量：`usedSlots` 是正在执行的请求占用数，不含排队请求，
+账号视图的 `capacity` 返回查询时的普通并发容量：`usedSlots` 不含独立审批池和排队请求，
 读取运行态失败时为 `null`；`totalSlots` 是应用账号独立配置或全局默认值后的上限，`null` 表示不限。
 该上限不代表上游实际允许的并发数
 
@@ -1177,7 +1177,7 @@ HTTP 请求头及新建 WS 的握手提示按当时的最终出站档位构造�
 `providerCounts` 和 `clientKeyCount`。查询分组成员使用账号列表的 `groupId` 筛选，
 不提供独立的分组成员路由；账号的 Provider 不代表整个分组的 Provider。
 `capacity.totalSlots` 为 `number | null`：`null` 表示可用成员中存在继承无限并发的账号，`0` 表示没有可用槽位。
-`capacity.usedSlots` 继续返回实际在途数；Redis 不可用时为 `null`
+分组容量只统计普通池，`capacity.usedSlots` 返回其实际在途数；Redis 不可用时为 `null`
 
 分组费用按请求执行时实际服务账号的分组快照归属，不按 Client Key 绑定的分组分摊。
 账号属于多个组时，各组均包含该请求费用；之后调整账号分组不重写历史归属
@@ -1361,12 +1361,13 @@ OpenAI 严格亲和下后代线程的会话账号等待不随普通账号排队�
 切换账号或内部重试不重新计时；若插件设置了请求总时限，等待也计入该时限。排队超时不用于中断已开始的上游生成。
 设置更新请求须包含这三个字段，新请求使用更新后的快照
 
-`openaiGuardianReservedConcurrency`（默认 0，取值 0～4,294,967,295）为 Codex Guardian 自动审批保留账号并发，保存后对新请求生效。
+`openaiGuardianReservedConcurrency`（默认 0，取值 0～4,294,967,295）设置 Codex Guardian 自动审批的每账号独立并发，保存后对新请求生效。
 Guardian 以 `subagent_kind` 或 `client_metadata.x-openai-subagent` 值 `guardian` 识别。取值 R 大于 0 时，
-有限上限为 L 的账号对其他 OpenAI 请求只开放 `max(L − R, 1)` 个名额，Guardian 可用满 L；
-开启账号排队后，Guardian 排在同账号已有 Guardian 之后、全部普通等待者之前，不受单账号排队上限约束，
-仍受总等待容量与等待时限约束。不限并发的账号和关闭排队时的其余行为不变。
-设置更新请求须包含该字段
+普通请求保留账号原上限 L，Guardian 单独计数并最多运行 R 个，两类请求互不占用名额，也不借用对方空位。
+例如 L 为 10、R 为 3 时，可以同时运行 10 个普通请求和 3 个审批请求；普通并发不限时，审批仍受 R 限制。
+设为 0 时关闭独立额度，Guardian 使用普通并发。开启账号排队后，审批请求单独按 FIFO 等待，
+不受普通队列位置或单账号排队上限约束，仍受自身队列总等待容量与等待时限约束。
+两类请求仍遵守账号最小请求间隔、可用性和 Client Key 限额。设置更新请求须包含该字段
 
 `openaiAccountAffinity` 控制 OpenAI 账号亲和，默认 `strict`（严格），已有保存的模式保持不变：
 
@@ -1710,7 +1711,7 @@ errorCode, errorMessage, startedAt, completedAt, expiresAt, createdAt, updatedAt
 
 ### Dashboard 容量与账号用量
 
-Dashboard 的 `capacityInfo.maxConcurrentPerAccount` 为默认账号并发上限，`0` 表示不限制。
+Dashboard 的 `capacityInfo` 统计普通容量，不含独立审批池；`maxConcurrentPerAccount` 为默认账号并发上限，`0` 表示不限制。
 `capacityInfo.totalSlots` 为 `number | null`；可用账号池含无限并发账号时为 `null`，此时 `availableSlots` 也为 `null`。
 `usedSlots` 仍表示实际在途数，Redis 不可用时为 `null`；没有可用账号时 `totalSlots` 为 `0`
 

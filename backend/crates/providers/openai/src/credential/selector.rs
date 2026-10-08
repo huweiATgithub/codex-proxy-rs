@@ -16,10 +16,10 @@ use gateway_core::account::{
 use gateway_core::concurrency::{CapacityWait, ConcurrencyWaitQueue, QueueRejection, WaitPriority};
 use gateway_core::engine::{AttemptContext, ContinuationAttempt, policy::AccountPolicyError};
 use gateway_core::provider_ports::{
-    ProviderLeaseAcquisition, ProviderLeaseGuard, ProviderLeasePort, ProviderLeaseRequest,
-    ProviderSchedulingLeaseRequest, ProviderSessionAffinityKey, ProviderSessionAffinityPort,
-    ProviderSessionBinding, ProviderSessionExclusionPort, ProviderSessionExclusions,
-    ProviderStoreError,
+    ProviderConcurrencyPool, ProviderLeaseAcquisition, ProviderLeaseGuard, ProviderLeasePort,
+    ProviderLeaseRequest, ProviderSchedulingLeaseRequest, ProviderSessionAffinityKey,
+    ProviderSessionAffinityPort, ProviderSessionBinding, ProviderSessionExclusionPort,
+    ProviderSessionExclusions, ProviderStoreError,
 };
 use gateway_core::routing::ProviderKind;
 use secrecy::ExposeSecret;
@@ -114,7 +114,7 @@ struct CredentialSelectionInput<'a> {
     attempt: &'a AttemptContext,
     session_affinity_key: Option<&'a ProviderSessionAffinityKey>,
     session_affinity_observation: Option<&'a CodexSessionAffinity>,
-    /// Codex Guardian 自动审批请求；仅在配置了预留名额时获得预留与队列优先
+    /// Codex Guardian 自动审批请求；仅在配置独立额度时使用审批容量池
     guardian: bool,
 }
 
@@ -126,6 +126,7 @@ pub(crate) struct CodexCyberPolicyScope {
 
 pub struct CodexCredentialSelector {
     waiting: ConcurrencyWaitQueue<ProviderAccountId>,
+    reserved_waiting: ConcurrencyWaitQueue<ProviderAccountId>,
     provider_kind: ProviderKind,
     repository: CodexCredentialRepository,
     leases: Arc<dyn ProviderLeasePort>,
@@ -285,6 +286,7 @@ impl CodexCredentialSelector {
             cookie_policy,
             risk_recovery: Mutex::new(HashMap::new()),
             waiting: ConcurrencyWaitQueue::default(),
+            reserved_waiting: ConcurrencyWaitQueue::default(),
             account_feedback,
         }
     }
@@ -465,15 +467,24 @@ impl CodexCredentialSelector {
                 queue_policy.timeout = Duration::from_secs(30);
             }
         }
-        // 预留名额只对普通请求生效；Guardian 可用满全部名额，并在账号队列中排在普通请求之前
+        // 审批使用独立容量与等待队列，任一池饱和都不能阻塞另一池取得空闲名额
         let reserve = request
             .attempt
             .account_selection_policy()
             .openai_guardian_reserved_concurrency();
         let prioritized = request.guardian && reserve > 0;
-        let reserved_concurrency = if prioritized { 0 } else { reserve };
+        let reserved_concurrency = if prioritized { reserve } else { 0 };
+        let concurrency_pool = if prioritized {
+            ProviderConcurrencyPool::Reserved
+        } else {
+            ProviderConcurrencyPool::Shared
+        };
         let mut waiting = CapacityWait::new(
-            &self.waiting,
+            if prioritized {
+                &self.reserved_waiting
+            } else {
+                &self.waiting
+            },
             queue_policy,
             request.attempt.deadline().at(),
             request.attempt.concurrency_wait_budget(),
@@ -619,6 +630,7 @@ impl CodexCredentialSelector {
                     request.attempt.client_api_key_ref(),
                     &self.provider_kind,
                     &account_ids,
+                    concurrency_pool,
                 )
                 .await?;
             let round_robin_cursor = scheduling.round_robin_cursor();
@@ -877,6 +889,7 @@ impl CodexCredentialSelector {
                             policy.request_interval(),
                             request.attempt.deadline(),
                         )
+                        .with_concurrency_pool(concurrency_pool)
                         .with_cancellation(request.attempt.cancellation().clone()),
                     ))
                     .await?

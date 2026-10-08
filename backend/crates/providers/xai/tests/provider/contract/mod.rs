@@ -1839,6 +1839,7 @@ impl ProviderLeasePort for DiagnosticLeasePort {
         _: &'a ClientApiKeyId,
         _: &'a ProviderKind,
         account_ids: &'a [gateway_core::account::ProviderAccountId],
+        _pool: gateway_core::provider_ports::ProviderConcurrencyPool,
     ) -> futures::future::BoxFuture<'a, Result<ProviderSchedulingState, ProviderStoreError>> {
         Box::pin(async move {
             Ok(ProviderSchedulingState::new(
