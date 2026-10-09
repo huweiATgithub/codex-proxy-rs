@@ -3022,3 +3022,67 @@ async fn compressed_http_request_above_default_limit_should_reach_execution_afte
         }
     }
 }
+
+#[tokio::test]
+async fn streaming_middleware_preserves_heartbeats_before_and_after_rewriting() {
+    for opaque in [
+        b": ping\n\n".as_slice(),
+        b"id: next\nretry: 1000\n\n".as_slice(),
+        b"event: vendor.future\ndata: future non-JSON payload\n\n".as_slice(),
+    ] {
+        let admin = crate::admin::AdminTestFixture::new().await.services;
+        let trace = Arc::new(Trace::default());
+        let heartbeat = Bytes::copy_from_slice(opaque);
+        let future = Bytes::from_static(
+            b"event: response.future\ndata: {\"type\":\"response.future\",\"extension\":true}\n\n",
+        );
+        let session = FakeSession::streaming(
+            Arc::clone(&trace),
+            vec![
+                NextStep::Event(delivery(started(), CommitRequirement::CommitBeforeDelivery)),
+                NextStep::Event(delivery_provider(
+                    ProviderEvent::wire(
+                        ProtocolWireEvent::raw_sse("openai", heartbeat.clone()).unwrap(),
+                    ),
+                    CommitRequirement::AlreadyCommitted,
+                )),
+                NextStep::Event(delivery_provider(
+                    ProviderEvent::wire(
+                        ProtocolWireEvent::raw_sse("openai", future.clone()).unwrap(),
+                    ),
+                    CommitRequirement::AlreadyCommitted,
+                )),
+                NextStep::Event(delivery_provider(
+                    ProviderEvent::wire(
+                        ProtocolWireEvent::raw_sse("openai", heartbeat.clone()).unwrap(),
+                    ),
+                    CommitRequirement::AlreadyCommitted,
+                )),
+                NextStep::Event(delivery(completed(), CommitRequirement::AlreadyCommitted)),
+                NextStep::FinalizeSuccess,
+            ],
+        );
+        let replacement = Bytes::from_static(b"event: response.future\ndata: {\"type\":\"response.future\",\"extension\":\"changed\"}\n\n");
+        let middleware = Arc::new(responses_middleware().with_response_actions(vec![
+            ResponseFrameAction::Continue,
+            ResponseFrameAction::Continue,
+            ResponseFrameAction::Replace(replacement.clone()),
+            ResponseFrameAction::Continue,
+            ResponseFrameAction::Continue,
+            ResponseFrameAction::Continue,
+        ]));
+        let response =
+            response_with_middleware(&admin, "openai", session, true, Some(middleware)).await;
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert_eq!(
+            text.matches(std::str::from_utf8(opaque).unwrap()).count(),
+            2
+        );
+        assert!(text.contains(std::str::from_utf8(&replacement).unwrap()));
+        assert!(text.contains("response.completed"));
+        assert!(!text.contains("middleware_failed"));
+        assert!(text.ends_with("data: [DONE]\n\n"));
+        assert!(!trace.is_cancelled());
+    }
+}

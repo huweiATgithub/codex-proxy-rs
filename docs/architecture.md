@@ -404,10 +404,12 @@ OpenAI 模型目录用于发现，不因目录缺项拒绝请求；管理员配�
 - OpenAI 是透明边界。Responses 请求保留未知字段和字段顺序；SSE、WebSocket、Images 与 standalone
   Search 的业务正文按原始字节转发，原生续写额度恢复遵循下述 continuation 例外。
   canonical facts 从同一数据旁路提取，用于路由、恢复判断、观测和计费。
+  WebSocket transport 按完整文本消息交付，wire 同时保留原文与可选解析视图；同协议出口使用原文，
+  SSE 转换只发生在需要该表达的出口。插件未改写的封套继续携带原始文本，观测失败不否定交付。
   非流式 Responses 由 API 聚合 wire：终态省略或清空 `output` 时，使用同一响应的 `output_item.done`
   按 `output_index` 还原完整输出；已有非空终态输出不改写。完成项缺失或冲突时在下游提交前拒绝，
   不凭 canonical 增量补造内容，也不让 SSE/WS 转发额外保存整份输出
-- Responses 的业务扩展头保留原始多值字节。API 负责剥离鉴权、账号身份和 HTTP 传输字段，
+- Responses、Images 与 standalone Search 的业务扩展头保留原始多值字节。API 负责剥离鉴权、账号身份和 HTTP 传输字段，
   并提取会话语义；`gateway-protocol` 共享 HTTP 传输与网关链路字段分类。客户端兼容规则集中在
   `providers/openai/src/transport/downstream/`：`headers.rs` 管理下游环境头和已提取语义的头部别名，
   `body.rs` 管理已知顶层参数的过滤、缺省值补齐和已确认不兼容的 `input` 形状适配；兼容基准为 Codex Core/Desktop 请求协议，

@@ -22,6 +22,92 @@ use gateway_core::{
 };
 
 #[tokio::test]
+async fn reading_websocket_facts_preserves_original_text_and_opaque_messages() {
+    let records = tempfile::tempdir().unwrap();
+    let marker = records.path().join("facts.jsonl");
+    let worker = std::fs::read(env!("CARGO_BIN_EXE_gateway-plugin-test-middleware")).unwrap();
+    let package = crate::support::package_with_contributions(
+        &worker,
+        Contributions::from([crate::support::contribution(
+            Capability::Middleware,
+            vec![Stage::Attempt],
+            vec!["openai".into()],
+            vec!["openai".into()],
+        )]),
+    );
+    let (_cache, runtime) = setup_package(vec![InstanceFixture {
+        id: "facts-reader",
+        configuration: serde_json::json!({"mode":"facts", "attempt":true, "facts_marker":marker}),
+        bindings: vec![binding(MIDDLEWARE_CONTRIBUTION, "attempt", 0, PluginFailurePolicy::Reject)],
+    }], package).await;
+    let generation = prepare(&runtime).await;
+    let plan = runtime
+        .execution_registry()
+        .middleware(&generation)
+        .unwrap();
+    let messages = [
+        "{ \"type\" : \"future.event\", \"number\" : 1e3, \"text\" : \"\\u0061\" }".to_owned(),
+        format!(
+            "{{\"type\":\"future.deep\",\"value\":{}0{}}}",
+            "[".repeat(140),
+            "]".repeat(140)
+        ),
+        "future non-JSON text".to_owned(),
+    ];
+    let events: Vec<_> = messages
+        .iter()
+        .map(|raw| {
+            let wire = match serde_json::from_str::<serde_json::Value>(raw) {
+                Ok(data) => ProtocolWireEvent::json("openai", None, data)
+                    .unwrap()
+                    .with_raw_websocket_message(raw.as_str()),
+                Err(_) => ProtocolWireEvent::raw_websocket("openai", raw.as_str()).unwrap(),
+            };
+            Ok(ProviderEvent::wire(wire))
+        })
+        .collect();
+    let mut stream = execute_attempt_middleware(
+        Some(&plan),
+        attempt_middleware_context_for_transport(Arc::default(), ClientTransport::WebSocket),
+        operation(),
+        ClientTransport::WebSocket,
+        Box::new(move |_, _| {
+            Box::pin(async move {
+                Ok(ProviderStream::new(
+                    ProviderCallMetadata::new(
+                        ProviderKind::new("openai").unwrap(),
+                        UpstreamModelId::new("native-model").unwrap(),
+                        ProviderAccountId::new("acct_original").unwrap(),
+                        UpstreamTransport::new("websocket").unwrap(),
+                    ),
+                    futures::stream::iter(events),
+                    (),
+                ))
+            })
+        }),
+    )
+    .await
+    .unwrap();
+    let mut delivered = Vec::new();
+    while let Some(event) = stream.next().await {
+        let event = event.unwrap();
+        assert!(!event.middleware_transformed());
+        delivered.push(
+            event
+                .wire_event()
+                .unwrap()
+                .raw_websocket_message()
+                .unwrap()
+                .to_owned(),
+        );
+    }
+    assert_eq!(delivered, messages);
+    assert_eq!(marker_lines(&marker, 4).await.len(), 4);
+    drop(stream);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn facts_are_readable_without_replacing_or_duplicating_the_original_execution() {
     let records = tempfile::tempdir().unwrap();
     let marker = records.path().join("facts.jsonl");

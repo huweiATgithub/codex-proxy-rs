@@ -752,7 +752,6 @@ impl CodexProvider {
                 UpstreamSendState::NotSent,
             ));
         }
-        validate_openai_reasoning(generate.protocol_payload().body())?;
         let mut upstream = encode_generate_request(&generate, upstream_model.as_str(), None)
             .map_err(map_request_error)?;
         upstream.client_account_follow_only = crate::request_identity::follows_session_with_headers(
@@ -1056,27 +1055,4 @@ fn native_request_requirements(request: &GenerateRequest) -> CapabilityRequireme
         request.protocol_payload().clone(),
     ))
     .capability_requirements()
-}
-
-fn validate_openai_reasoning(body: &Map<String, Value>) -> Result<(), ProviderError> {
-    let Some(effort) = body
-        .get("reasoning")
-        .and_then(Value::as_object)
-        .and_then(|reasoning| reasoning.get("effort"))
-    else {
-        return Ok(());
-    };
-    let Some(effort) = effort.as_str() else {
-        return Err(provider_error(
-            ProviderErrorKind::InvalidRequest,
-            UpstreamSendState::NotSent,
-        ));
-    };
-    if effort.is_empty() || effort.len() > 64 || effort.chars().any(char::is_control) {
-        return Err(provider_error(
-            ProviderErrorKind::InvalidRequest,
-            UpstreamSendState::NotSent,
-        ));
-    }
-    Ok(())
 }

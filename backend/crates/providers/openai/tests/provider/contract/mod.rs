@@ -3,6 +3,7 @@
 mod account_isolation;
 mod capacity;
 mod error_details;
+mod passthrough;
 mod precommit;
 mod response_interrupt;
 mod session_binding;
@@ -7972,6 +7973,7 @@ async fn responses_should_observe_and_bill_the_outbound_service_tier_on_both_tra
             let response_frames = format!(
                 "event: response.created\ndata: {created}\n\nevent: response.completed\ndata: {completed}\n\n"
             );
+            let expected_messages = vec![created.to_string(), completed.to_string()];
             let (base_url, http_server, websocket_server) = if use_websocket {
                 let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
                 let base_url = format!("http://{}", listener.local_addr().expect("address"));
@@ -8062,6 +8064,7 @@ async fn responses_should_observe_and_bill_the_outbound_service_tier_on_both_tra
             let mut observations = Vec::new();
             let mut costs = Vec::new();
             let mut raw_response = Vec::new();
+            let mut raw_messages = Vec::new();
             while let Some(event) = stream.next().await {
                 let event = event.expect("provider event");
                 if let Some(observation) = event.response_observation() {
@@ -8074,6 +8077,12 @@ async fn responses_should_observe_and_bill_the_outbound_service_tier_on_both_tra
                 }
                 if let Some(frame) = event.wire_event().and_then(|wire| wire.raw_sse_frame()) {
                     raw_response.extend_from_slice(frame);
+                }
+                if let Some(message) = event
+                    .wire_event()
+                    .and_then(|wire| wire.raw_websocket_message())
+                {
+                    raw_messages.push(message.to_owned());
                 }
             }
             let outbound = if let Some(server) = http_server {
@@ -8127,7 +8136,11 @@ async fn responses_should_observe_and_bill_the_outbound_service_tier_on_both_tra
                 expected_cost.into_iter().collect::<Vec<_>>(),
                 "WebSocket={use_websocket}, requested={requested:?}, reported={reported:?}"
             );
-            assert_eq!(raw_response, response_frames.as_bytes());
+            if use_websocket {
+                assert_eq!(raw_messages, expected_messages);
+            } else {
+                assert_eq!(raw_response, response_frames.as_bytes());
+            }
         }
     }
 }
@@ -10710,17 +10723,16 @@ async fn assert_websocket_failure_headers(headers: Value, request_id: Option<&st
             .iter()
             .filter_map(|event| event.wire_event()?.event_type())
             .collect::<Vec<_>>(),
-        vec![event_type],
-        "original failure stays atomically deliverable",
+        vec!["response.metadata", event_type],
+        "original metadata and failure stay atomically deliverable",
     );
     let wire = events
         .iter()
-        .find_map(|event| event.wire_event()?.raw_sse_frame())
+        .filter_map(|event| event.wire_event())
+        .find(|wire| wire.event_type() == Some(event_type))
+        .and_then(|wire| wire.raw_websocket_message())
         .expect("raw frame");
-    assert_eq!(
-        wire.as_ref(),
-        format!("event: {event_type}\ndata: {raw}\n\n").as_bytes()
-    );
+    assert_eq!(wire, raw);
 }
 
 #[tokio::test]

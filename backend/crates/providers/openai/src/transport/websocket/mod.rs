@@ -24,7 +24,7 @@ pub use self::{
     error::{CodexWebSocketCloseError, CodexWebSocketExchangeError, CodexWebSocketUpstreamError},
     exchange::{
         CodexWebSocketRateLimitUpdates, CodexWebSocketResponseMetadataUpdates,
-        CodexWebSocketSseStream, CodexWebSocketStreamingExchange,
+        CodexWebSocketStreamingExchange, CodexWebSocketTextStream,
     },
     handshake::responses_websocket_endpoint,
     model::{

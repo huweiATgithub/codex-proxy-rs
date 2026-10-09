@@ -467,7 +467,11 @@ impl MiddlewareBody for PluginMiddlewareBody {
                     && frame
                         .event()
                         .is_some_and(|event| event.wire_event().is_none());
-                if !facts_only && !valid_plugin_frame(self.framing, frame.bytes()) {
+                // 来源句柄已核对正文与交付归属，未改写的原始内容不依赖 JSON 解析
+                if frame.transformed()
+                    && !facts_only
+                    && !valid_plugin_frame(self.framing, frame.bytes())
+                {
                     return Err(invalid());
                 }
                 if self.pending_transformed {

@@ -309,15 +309,15 @@ async fn forward_websocket_response_stream(state: WebSocketStreamForwardState) {
         if let Some(model) = metadata.response_metadata.effective_model.as_ref() {
             response_metadata_updates.lock().await.reported_model = Some(model.clone());
         }
-        let (frame, terminal) = match reduced.action {
+        let terminal = match reduced.action {
             ExchangeAction::RateLimits(rate_limits) => {
                 rate_limit_updates.lock().await.push(rate_limits);
                 continue;
             }
-            ExchangeAction::Forward { frame, terminal } => (frame, terminal),
+            ExchangeAction::Forward { terminal } => terminal,
             ExchangeAction::Ignore => continue,
         };
-        if tx.send(Ok(Bytes::from(frame))).await.is_err() {
+        if tx.send(Ok(Bytes::from(raw))).await.is_err() {
             trace.record(
                 "upstream.forward.failed",
                 json!({"reason": "receiver_dropped"}),

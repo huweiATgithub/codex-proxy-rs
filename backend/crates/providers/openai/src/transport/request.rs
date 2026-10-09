@@ -754,7 +754,7 @@ fn apply_protocol_context(request: &mut CodexResponsesRequest, context: &Map<Str
     }
 }
 
-fn decode_passthrough_headers(context: &Map<String, Value>) -> HeaderMap {
+pub(crate) fn decode_passthrough_headers(context: &Map<String, Value>) -> HeaderMap {
     let mut headers = HeaderMap::new();
     let Some(entries) = context
         .get(PASSTHROUGH_HEADERS_CONTEXT_KEY)

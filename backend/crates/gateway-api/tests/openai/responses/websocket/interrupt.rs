@@ -64,6 +64,7 @@ struct InterruptProvider {
     calls: AtomicUsize,
     transport: Mutex<Option<Arc<ControlTransport>>>,
     complete: tokio::sync::Notify,
+    initial_messages: Mutex<std::collections::VecDeque<ProtocolWireEvent>>,
 }
 
 #[async_trait]
@@ -101,6 +102,14 @@ impl Provider for InterruptProvider {
         let body = futures::stream::unfold(
             (0, transport, self),
             |(phase, transport, provider)| async move {
+                let pending = if phase == 1 {
+                    provider.initial_messages.lock().unwrap().pop_front()
+                } else {
+                    None
+                };
+                if let Some(wire) = pending {
+                    return Some((Ok(ProviderEvent::wire(wire)), (phase, transport, provider)));
+                }
                 let (wire, events, next_phase) = match phase {
                     0 => (
                         json!({"type":"response.created","response":{"id":transport.id,"model":"model-a","status":"in_progress","output":[]}}),
@@ -396,4 +405,46 @@ async fn unknown_controls_preserve_bytes_and_do_not_admit_queued_creates() {
     })
     .await
     .expect("disconnect releases active execution");
+}
+
+#[tokio::test]
+async fn active_websocket_delivery_preserves_unparsed_messages_and_business_metadata() {
+    let messages = vec![
+        "{ \"type\": \"future.event\", \"number\": 1e3, \"escaped\": \"\\u0061\" }\r\n".to_owned(),
+        r#"{"type":"response.metadata","metadata":{"type":"safety_buffering","use_cases":["cyber"],"reasons":["user_risk"],"future":{"keep":true}}}"#.to_owned(),
+        format!("{{\"type\":\"future.deep\",\"extension\":{}0{}}}", "[".repeat(140), "]".repeat(140)),
+        "future non-JSON text".to_owned(), "[DONE]".to_owned(),
+    ];
+    let provider = Arc::new(InterruptProvider::default());
+    *provider.initial_messages.lock().unwrap() = messages
+        .iter()
+        .map(|raw| match serde_json::from_str::<Value>(raw) {
+            Ok(value) => ProtocolWireEvent::json(
+                "openai",
+                value.get("type").and_then(Value::as_str).map(str::to_owned),
+                value,
+            )
+            .unwrap()
+            .with_raw_websocket_message(raw.as_str()),
+            Err(_) => ProtocolWireEvent::raw_websocket("openai", raw.as_str()).unwrap(),
+        })
+        .collect();
+    let (mut socket, _server) =
+        connect(provider.clone(), Arc::new(InterruptAdmissions::default())).await;
+    send(
+        &mut socket,
+        json!({"type":"response.create","model":"model-a","input":"synthetic"}),
+    )
+    .await;
+    assert_eq!(next(&mut socket).await["type"], "response.created");
+    for expected in &messages {
+        let actual = tokio::time::timeout(Duration::from_secs(5), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(actual.to_text().unwrap(), expected);
+    }
+    provider.complete.notify_one();
+    assert_eq!(next(&mut socket).await["type"], "response.completed");
 }

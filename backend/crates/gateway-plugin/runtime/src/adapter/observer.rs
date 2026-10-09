@@ -447,6 +447,9 @@ async fn dispatch_websocket_queue(
 }
 
 fn websocket_payload(observation: &WebSocketResponseObservation) -> Result<Vec<u8>, ()> {
+    if let Some(raw) = observation.wire().raw_websocket_message() {
+        return Ok(raw.as_bytes().to_vec());
+    }
     if let Some(raw) = observation.wire().raw_json_body() {
         return Ok(raw.to_vec());
     }

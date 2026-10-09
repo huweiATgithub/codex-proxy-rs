@@ -4,9 +4,8 @@ use gateway_protocol::openai::events;
 use serde_json::Value;
 
 use crate::transport::protocol::websocket::{
-    websocket_event_frame, websocket_event_type, websocket_metadata_headers,
-    websocket_metadata_turn_state, websocket_response_completed_id,
-    websocket_response_is_interrupted,
+    websocket_event_type, websocket_metadata_headers, websocket_metadata_turn_state,
+    websocket_response_completed_id, websocket_response_is_interrupted,
 };
 use crate::transport::response_meta;
 
@@ -24,7 +23,6 @@ pub(in crate::transport::websocket) enum WebSocketTerminalKind {
 pub(super) enum ExchangeAction {
     RateLimits(events::ParsedRateLimits),
     Forward {
-        frame: String,
         terminal: Option<WebSocketTerminalKind>,
     },
     Ignore,
@@ -41,11 +39,10 @@ pub(super) fn reduce_websocket_event(
     metadata: &mut CodexWebSocketConnectionMetadata,
     continuation: &mut WebSocketContinuationState,
 ) -> Result<ReducedWebSocketEvent, CodexWebSocketExchangeError> {
-    // 每帧只解析一次 JSON，后续提取全部复用同一 Value；
-    // 不可解析的帧不承载可路由的事件类型，忽略
+    // 解析只服务连接状态和观测，未知或不可解析文本仍交付下游
     let Ok(value) = serde_json::from_str::<Value>(raw) else {
         return Ok(ReducedWebSocketEvent {
-            action: ExchangeAction::Ignore,
+            action: ExchangeAction::Forward { terminal: None },
             diagnostic_event_type: None,
             turn_state_update: None,
         });
@@ -90,9 +87,10 @@ pub(super) fn reduce_websocket_event(
         Some("response.failed" | "error") => Some(WebSocketTerminalKind::Failed),
         _ => None,
     };
-    let action = match websocket_event_frame(&value, raw) {
-        Some(frame) => ExchangeAction::Forward { frame, terminal },
-        None => ExchangeAction::Ignore,
+    let action = if event == Some("codex.rate_limits") {
+        ExchangeAction::Ignore
+    } else {
+        ExchangeAction::Forward { terminal }
     };
     Ok(ReducedWebSocketEvent {
         action,

@@ -222,7 +222,7 @@ impl CodexBackendClient {
             None => format!("model={}", request.model()),
         };
         insert_optional_protocol_header(&mut headers, "x-codex-routing-hint", Some(&routing_hint));
-        append_passthrough_headers(&mut headers, request);
+        append_passthrough_headers(&mut headers, &request.passthrough_headers);
         self.append_middleware_headers(&mut headers)?;
         Ok(headers)
     }
@@ -244,8 +244,8 @@ impl CodexBackendClient {
     }
 }
 
-fn append_passthrough_headers(headers: &mut HeaderMap, request: &CodexResponsesRequest) {
-    for name in request.passthrough_headers.keys() {
+pub(super) fn append_passthrough_headers(headers: &mut HeaderMap, passthrough: &HeaderMap) {
+    for name in passthrough.keys() {
         // 身份与传输字段只由画像/正文生成；其余协议头保留原始多值字节
         if is_managed_identity_header(name.as_str())
             || matches!(
@@ -262,7 +262,7 @@ fn append_passthrough_headers(headers: &mut HeaderMap, request: &CodexResponsesR
             continue;
         }
         headers.remove(name);
-        for value in request.passthrough_headers.get_all(name) {
+        for value in passthrough.get_all(name) {
             headers.append(name.clone(), value.clone());
         }
     }

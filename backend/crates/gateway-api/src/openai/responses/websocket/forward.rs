@@ -296,8 +296,10 @@ fn detach_body(body: Box<dyn MiddlewareBody>) {
 }
 
 fn validate_frame(frame: &MiddlewareFrame) -> Result<(), MiddlewareError> {
-    if frame.framing() != MiddlewareFraming::JsonDocument
-        || serde_json::from_slice::<serde::de::IgnoredAny>(frame.bytes()).is_err()
+    if !matches!(
+        frame.framing(),
+        MiddlewareFraming::JsonDocument | MiddlewareFraming::RawBytes
+    ) || std::str::from_utf8(frame.bytes()).is_err()
     {
         return Err(MiddlewareError::InvalidState);
     }
@@ -547,19 +549,26 @@ impl WebSocketExecutionBody {
                     self.transformed_pending = transformed;
                     continue;
                 }
-                messages.extend(encoded.into_iter().map(|message| (message, transformed)));
+                let framing = if event.wire_event().is_some_and(|wire| {
+                    wire.raw_websocket_message().is_some() && !wire.has_json_data()
+                }) {
+                    MiddlewareFraming::RawBytes
+                } else {
+                    MiddlewareFraming::JsonDocument
+                };
+                messages.extend(
+                    encoded
+                        .into_iter()
+                        .map(|message| (message, transformed, framing)),
+                );
                 self.transformed_pending = false;
             }
             let terminal = self.encoder.is_completed() || self.encoder.has_wire_failure();
             let last = messages.len().saturating_sub(1);
             self.pending.extend(messages.into_iter().enumerate().map(
-                |(index, (message, transformed))| {
-                    MiddlewareFrame::new(
-                        Bytes::from(message),
-                        MiddlewareFraming::JsonDocument,
-                        terminal && index == last,
-                    )
-                    .with_transformed(transformed)
+                |(index, (message, transformed, framing))| {
+                    MiddlewareFrame::new(Bytes::from(message), framing, terminal && index == last)
+                        .with_transformed(transformed)
                 },
             ));
             self.awaiting_terminal_eof = terminal;
