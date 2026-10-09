@@ -9578,7 +9578,7 @@ async fn exact_websocket_busy_then_replay_scope_relaxation_is_rejected_before_se
 }
 
 #[tokio::test]
-async fn continuation_prefetch_over_128_kib_should_commit_wire_without_protocol_failure() {
+async fn continuation_prefetch_over_128_kib_should_wait_for_grace_without_protocol_failure() {
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_prefetch_limit").await;
     let padding = "x".repeat(128 * 1024);
@@ -9596,7 +9596,7 @@ async fn continuation_prefetch_over_128_kib_should_commit_wire_without_protocol_
     );
     assert!(body.len() > 128 * 1024);
     let (base_url, release, _first_chunk_sent, server) =
-        paused_chunked_sse_server(body, String::new()).await;
+        paused_chunked_sse_server(body.clone(), String::new()).await;
     let mut stream = provider_with_base_url(&store, base_url)
         .execute(
             planned_request("openai", http_generate_operation()),
@@ -9605,25 +9605,52 @@ async fn continuation_prefetch_over_128_kib_should_commit_wire_without_protocol_
         )
         .await
         .expect("prepare provider stream");
-    let visible = loop {
-        let event = timeout(Duration::from_secs(1), stream.next())
+    let visible = {
+        let next_visible = async {
+            loop {
+                let event = stream
+                    .next()
+                    .await
+                    .expect("provider stream remains open")
+                    .expect("large prefetch cannot create a protocol failure");
+                if event.has_client_event() {
+                    break event;
+                }
+            }
+        };
+        tokio::pin!(next_visible);
+        assert!(
+            timeout(Duration::from_secs(1), next_visible.as_mut())
+                .await
+                .is_err(),
+            "large structural events must remain buffered during the grace period"
+        );
+        timeout(Duration::from_secs(3), next_visible)
             .await
-            .expect("prefetch threshold must release buffered wire")
-            .expect("provider stream remains open")
-            .expect("threshold cannot create a protocol failure");
-        if event.has_client_event() {
-            break event;
-        }
+            .expect("grace expiry must release buffered wire")
     };
 
     assert_eq!(
         visible.wire_event().and_then(|wire| wire.event_type()),
         Some("response.created")
     );
+    let mut wire = visible
+        .wire_event()
+        .unwrap()
+        .raw_sse_frame()
+        .unwrap()
+        .to_vec();
     release.send(()).expect("finish upstream response");
     while let Some(event) = stream.next().await {
-        event.expect("clean upstream EOF cannot become a protocol failure");
+        if let Some(frame) = event
+            .expect("clean upstream EOF cannot become a protocol failure")
+            .wire_event()
+            .and_then(|wire| wire.raw_sse_frame())
+        {
+            wire.extend_from_slice(frame);
+        }
     }
+    assert_eq!(wire, body.as_bytes());
     server.await.expect("chunked SSE server");
 }
 
