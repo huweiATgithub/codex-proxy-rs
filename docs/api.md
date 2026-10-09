@@ -1845,10 +1845,16 @@ WebSocket 握手默认请求专项计时，客户端显式提供的开关保留�
 由 Core 错误类型与 Provider 静态诊断生成；`diagnostic.message` 保存安全摘要。展示与导出共用这些字段，
 `sendState` 为 `not_sent / sent / ambiguous`，摘要被截断时带有 `truncated` 标记
 
-管理端下载的诊断包 `schemaVersion: 3` 用于人工反馈，不是备份或导入格式。它包含关联 ID、错误分类摘要、
-请求与错误事件各自的状态、attempt、时间线阶段、计时和上述失败分类；不自动导出 message/raw error、任意 metadata、
-其他 trace event data、请求响应正文和头部。`availability` 与 `omitted` 明示未采集、不完整或主动省略的内容，
-`null` 不代表没有发生错误。版本、环境及原始错误片段仍需操作者另行补充并审阅脱敏
+管理端下载的诊断包 `schemaVersion: 4` 用于人工反馈，不是备份或导入格式。它包含关联 ID、错误分类摘要、
+请求与错误事件各自的状态、attempt、时间线阶段、计时和上述失败分类。
+`provider.precommit.released` 事件的 `precommitRelease` 保留 `reason / prefetchedBytes / waitMs`，
+分别表示 Provider 释放缓存的原因、累计预取字节数和等待毫秒数，不等同于下游已提交。
+原因只允许 `semantic_output / terminal / byte_limit / grace_timeout / eof`，数值只允许非负安全整数，
+缺失或未通过校验的字段为 `null`；其他事件的 `precommitRelease` 为 `null`
+
+诊断包不自动导出 message/raw error、任意 metadata、其他 trace event data、请求响应正文和头部。
+`availability` 与 `omitted` 明示未采集、不完整或主动省略的内容，`null` 不代表没有发生错误。
+版本、环境及原始错误片段仍需操作者另行补充并审阅脱敏
 
 错误记录中的“已自动恢复”表示系统关联到了后续成功请求，不会把原来的失败记录改为成功。
 `upstreamSendState = ambiguous` 表示无法确认该次上游执行结果，不代表后续恢复请求失败；
