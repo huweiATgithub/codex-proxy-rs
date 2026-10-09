@@ -775,7 +775,9 @@ async fn selected_proxy_location_overrides_global_and_reloads_without_mutating_c
     let original = json!({"model":"gpt-5.4", "input":[
         {"role":"user", "content":[{"type":"input_text", "text":"<environment_context><timezone>UTC</timezone></environment_context>"}], "internal_chat_message_metadata_passthrough":{"content_item_kinds":["environments.environment_context"], "create_time":1789293131.822}},
         {"role":"user", "content":[{"type":"input_text", "text":"<environment_context><timezone>UTC</timezone></environment_context>"}], "internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}},
-        {"role":"user", "content":[{"type":"input_text", "text":"<environment_context><timezone>UTC</timezone></environment_context>"}]}
+        {"role":"user", "content":[{"type":"input_text", "text":"<environment_context><timezone>UTC</timezone></environment_context>"}]},
+        {"role":"developer", "content":[{"type":"input_text", "text":"<codex_apps_client_time_context><timezone>UTC</timezone></codex_apps_client_time_context>"}], "internal_chat_message_metadata_passthrough":{"content_item_kinds":["additional_content.codex_apps_client_time_context"]}},
+        {"role":"developer", "content":[{"type":"input_text", "text":"<codex_apps_client_time_context><timezone>UTC</timezone></codex_apps_client_time_context>"}]}
     ], "tools":[{"type":"web_search"}]});
     let operation = Operation::Generate(GenerateRequest::from_protocol_payload(
         ProtocolPayload::json_object("openai", original.as_object().unwrap().clone())
@@ -800,6 +802,8 @@ async fn selected_proxy_location_overrides_global_and_reloads_without_mutating_c
         assert_eq!(body.pointer("/input/0/content/0/text"), Some(&json!(format!("<environment_context><timezone>{expected}</timezone></environment_context>"))));
         assert_eq!(body.pointer("/input/1/content/0/text"), original.pointer("/input/1/content/0/text"));
         assert_eq!(body.pointer("/input/2/content/0/text"), body.pointer("/input/0/content/0/text"));
+        assert_eq!(body.pointer("/input/3/content/0/text"), Some(&json!(format!("<codex_apps_client_time_context><timezone>{expected}</timezone></codex_apps_client_time_context>"))));
+        assert_eq!(body.pointer("/input/4/content/0/text"), body.pointer("/input/3/content/0/text"));
         assert_eq!(body.pointer("/input/0/internal_chat_message_metadata_passthrough/create_time"), Some(&json!(1789293131.822)));
     }
     assert_eq!(first_proxy.received_requests().await.unwrap().len(), 2);
@@ -1879,7 +1883,7 @@ async fn provider_should_send_the_request_snapshot_location_to_the_upstream() {
 }
 
 #[tokio::test]
-async fn provider_should_override_unclassified_environment_timezone_over_websocket() {
+async fn provider_should_override_unclassified_time_contexts_over_websocket() {
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_provider_contract").await;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
@@ -1896,11 +1900,15 @@ async fn provider_should_override_unclassified_environment_timezone_over_websock
         body
     });
     let environment = "<environment_context><cwd>/home/example/项目</cwd><timezone>Asia/Shanghai</timezone></environment_context>";
+    let desktop = "<codex_apps_client_time_context><timezone>Asia/Shanghai</timezone></codex_apps_client_time_context>";
     let payload = ProtocolPayload::json_object(
         "openai",
         json!({
             "model": "gpt-5.4",
-            "input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": environment}]}],
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": environment}]},
+                {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": desktop}]}
+            ],
             "tools": [{"type": "web_search"}]
         }).as_object().expect("request object").clone(),
     )
@@ -1920,6 +1928,10 @@ async fn provider_should_override_unclassified_environment_timezone_over_websock
         event.expect("successful websocket response");
     }
     let body = server.await.expect("server");
+    assert_eq!(
+        body.pointer("/input/1/content/0/text"),
+        Some(&json!(desktop.replace("Asia/Shanghai", "Pacific/Auckland")))
+    );
     assert_eq!(
         body.pointer("/input/0/content/0/text"),
         Some(&json!(
