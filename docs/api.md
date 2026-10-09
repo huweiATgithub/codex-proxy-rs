@@ -1933,8 +1933,7 @@ Provider metadata 分别保留 `requestedServiceTier` 与 `upstreamServiceTier` 
 下载并解包后校验发行身份，插件版本不匹配不阻止更新或回滚，兼容性风险在重启前提示。
 两条路径在文件交换前后复核全局配置版本，文件替换失败或取消时成组恢复二进制、Web 资源和官方插件目录
 
-详情响应的 `restartConfirmationSupported=true` 表示运行进程支持重启前确认。
-`restart/check` 返回 `targetVersion`、`releaseManifestSha256`、`configRevision` 和 `incompatiblePlugins`，
+客户端重启前调用 `restart/check`，返回 `targetVersion`、`releaseManifestSha256`、`configRevision` 和 `incompatiblePlugins`，
 每项包含 `instanceId`、`name`、`reason`，检查不修改插件状态。源码运行的目标版本与发行摘要为空，检查当前宿主兼容性。
 存在不兼容插件时，客户端展示列表并取得确认后，将完整检查结果作为 `confirmation` 提交重启请求。
 服务端在重启锁内重新检查，目标或配置变化返回 `40901`，须重新检查并确认。确认后保留启用配置，重启时逐个尝试加载插件。

@@ -52,13 +52,7 @@ pub(super) async fn invoke(
     if remaining.is_zero() || context.cancellation().is_cancelled() {
         return Err(MiddlewareError::Fault);
     }
-    let invocation = MiddlewareInvocation::new(
-        &context,
-        request,
-        next,
-        entry.instance_id.clone(),
-        crate::compatibility::FastSettings::middleware(&invocation_ports.session),
-    );
+    let invocation = MiddlewareInvocation::new(&context, request, next, entry.instance_id.clone());
     let (protocol, headers, payload) = match invocation.request_parts() {
         Ok(projection) => projection,
         Err(_) => return recover_rpc(&entry, &invocation, RpcError::Context(None)).await,
@@ -96,9 +90,7 @@ pub(super) async fn invoke(
         scope,
     )?;
     let head = MiddlewareRequestHead {
-        settings_sources: invocation
-            .settings_sources()
-            .map_err(|_| MiddlewareError::InvalidState)?,
+        settings_sources: invocation.settings_sources(),
         settings: invocation
             .settings()
             .map_err(|_| MiddlewareError::InvalidState)?,
