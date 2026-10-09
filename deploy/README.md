@@ -9,7 +9,7 @@
 | 安装与启动 | [手动安装](#手动安装) · [启动](#启动) · [公网访问](#公网访问) |
 | 接入客户端 | [客户端配置](#客户端配置) · [时区与客户端环境信息](#时区与客户端环境信息) · [登录与生图排查](#登录与生图排查) |
 | 日常运维 | [运行设置](#启动后的运行设置) · [小内存优化](#小内存优化) · [持久化与日志](#持久化与备份) · [请求排查](#请求错误排查) · [密码轮换](#密码语义) |
-| 更新与恢复 | [镜像升级](#镜像升级与源码构建) · [在线更新](#管理端在线更新) · [备份与恢复](#备份与恢复) · [优雅关停](#优雅关停) |
+| 更新与恢复 | [镜像升级](#镜像升级与源码构建) · [在线更新](#管理端在线更新) · [备份与恢复](#备份与恢复) · [停止与重启](#停止与重启) |
 | 运行源码 | [开发与源码联调](../docs/development.md) |
 
 ## 配置归属
@@ -195,6 +195,12 @@ curl -i http://127.0.0.1:8080/healthz
 ```
 
 `204 No Content` 表示应用、PostgreSQL、Redis 和后台任务的健康检查通过，不代表每个上游账号都可用
+
+HTTP 在数据库迁移和初始化完成后才监听。迁移期间启动日志每 15 秒报告已等待时间，
+包含执行迁移和等待迁移锁的时间，不代表完成比例；不要因暂时无法访问而反复重启。
+镜像和 Compose 默认提供 5 分钟健康检查启动宽限期，探测成功后立即转为健康，无需等满宽限期。
+历史数据较多时应提前延长 `healthcheck.start_period` 和部署工具的等待超时；只修改 Compose
+文件不会改变已创建容器的检查配置，需要在维护窗口重新创建容器
 
 不要把未脱敏的 `docker compose config` 或 `docker inspect` 输出上传到工单；它们会包含
 PostgreSQL/Redis 启动密码。日常校验使用 `config --quiet`
@@ -388,16 +394,14 @@ metrics_exporter = "none"
 其他客户端使用 Responses API、`/v1` Base URL 和代理密钥即可，不需要 Actor 标记。
 路由与请求格式见 [API 参考](../docs/api.md#3-openai-数据面与模型目录)
 
-## 优雅关停
+## 停止与重启
 
-收到停止信号后，应用先停止接收新连接并 drain 存量连接；整个 drain 共享一个从停止信号
-起算的绝对截止点（`host.drain_timeout_seconds`，默认 30 秒），逾期放弃等待，存量连接随
-进程退出终止。drain 结束后才关停后台 worker，预算为
-`host.worker_shutdown_timeout_seconds`（默认 30 秒），两段预算按最坏情况串联
+管理端重启、SIGTERM 和 SIGINT 使用同一关闭策略：停止接收新连接，不等待现有 HTTP、SSE、
+WebSocket 会话完成，进程退出时强制断开剩余连接。已入队的观测写入与后台清理保留
+`host.worker_shutdown_timeout_seconds`（默认 30 秒）的收尾预算；客户端在新进程就绪后重新连接
 
-Compose 的 `stop_grace_period` 为 75 秒，覆盖默认 30 秒 HTTP drain、30 秒 worker 收尾和额外调度
-余量。若调大任一应用超时，也必须把 `stop_grace_period` 调到大于两段超时之和；否则 Docker 会在
-宽限期结束时 SIGKILL
+Compose 的 `stop_grace_period` 为 75 秒，覆盖默认 30 秒后台收尾及进程清理余量。
+调大后台关闭预算时，也必须同步预留容器停止宽限期，否则 Docker 会在宽限期结束时 SIGKILL
 
 ## 本地开发
 
@@ -621,6 +625,8 @@ Compose 提供以下在线更新运行参数：
   `CPR_UPDATE_TEMP_DIR`、`CPR_UPDATE_STATE_FILE`、`CPR_UPDATE_LOCK_FILE` 仅用于显式覆盖
 - `CPR_ENABLE_SELF_RESTART=true`：更新或回滚完成后允许管理端请求重启；Docker 进程退出后由
   Compose 的 `restart: unless-stopped` 拉起新进程
+
+管理端自重启遵循统一的[停止与重启](#停止与重启)策略，客户端需在新进程完成迁移与初始化后重新连接
 
 Release 必须提供当前 OS/架构的 `codex-proxy-rs_<version>_<os>_<arch>.tar.gz` 与
 `checksums.txt`。服务会在替换前再次查询远端最新版本，校验下载 host、声明大小、SHA-256 和
