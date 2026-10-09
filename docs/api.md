@@ -1806,10 +1806,15 @@ OpenAI 从当前响应的 `responsesapi.websocket_timing.timing_metrics` 读取�
 WebSocket 握手默认请求专项计时，客户端显式提供的开关保留原值。
 各字段独立可选；响应开始前、终态后的计时和明确属于其他响应的事件不写入当前请求，重试时清空
 
+`critical_path` 仅采集 `scope=response`、`coverage=complete` 且边界为
+`actionable_output_item_done` 的响应级指标：引擎耗时取 `engine_wall_ms`，API 开销为
+`responses_pre_inference_ms` 与 `responses_other_ms` 之和，缺失分项不按零补齐。
+外层 `logical_turn` 累计时间不进入请求指标，也不用于补齐引擎 TTFT 或 Token 间隔
+
 | 字段 | 上游口径 |
 | --- | --- |
 | `upstreamApiOverheadMs` | API 排除引擎与客户端工具时间后的耗时 |
-| `upstreamEngineMs` | Engine Service 总耗时 |
+| `upstreamEngineMs` | 响应级引擎耗时，取完整 critical path 的墙钟时间或直接返回的 Engine Service 时间 |
 | `upstreamEngineIapiTtftMs` | Engine IAPI TTFT 总计 |
 | `upstreamEngineServiceTtftMs` | Engine Service TTFT 总计 |
 | `upstreamEngineIapiTbtMs` | 跨引擎调用的 IAPI Token 间隔 |

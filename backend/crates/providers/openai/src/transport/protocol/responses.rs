@@ -251,22 +251,54 @@ pub(crate) struct ResponseTimingMetrics {
 
 impl ResponseTimingMetrics {
     pub(crate) fn from_event(value: &Value) -> Self {
-        let metrics = value.get("timing_metrics");
-        let milliseconds = |key: &str| {
-            metrics?
-                .get(key)?
-                .as_f64()
-                .filter(|value| value.is_finite() && *value >= 0.0 && *value < i64::MAX as f64)
+        let Some(metrics) = value.get("timing_metrics") else {
+            return Self::default();
         };
+        let valid_milliseconds =
+            |value: &f64| value.is_finite() && *value >= 0.0 && *value < i64::MAX as f64;
+        let milliseconds =
+            |source: &Value, key: &str| source.get(key)?.as_f64().filter(valid_milliseconds);
+        if let Some(path) = metrics.get("critical_path") {
+            // 外层 logical_turn 可累计多次响应与工具等待，只取完整的当前响应阶段
+            if path.get("scope").and_then(Value::as_str) != Some("response")
+                || path.get("coverage").and_then(Value::as_str) != Some("complete")
+                || path.get("boundary_type").and_then(Value::as_str)
+                    != Some("actionable_output_item_done")
+            {
+                return Self::default();
+            }
+            // API 开销由推理前与其他处理构成，缺少任一分项时不能按零补齐
+            let overhead = milliseconds(path, "responses_pre_inference_ms")
+                .zip(milliseconds(path, "responses_other_ms"))
+                .map(|(before, other)| before + other)
+                .filter(valid_milliseconds);
+            return Self {
+                upstream_api_overhead_ms: overhead,
+                upstream_engine_ms: milliseconds(path, "engine_wall_ms"),
+                ..Self::default()
+            };
+        }
+        // 直接返回的专项指标保留原口径，明确标为整轮累计的值不能归入单次请求
+        if metrics
+            .get("timing_scope")
+            .is_some_and(|scope| scope.as_str() != Some("response"))
+        {
+            return Self::default();
+        }
         Self {
             upstream_api_overhead_ms: milliseconds(
+                metrics,
                 "responses_duration_excl_engine_and_client_tool_time_ms",
             ),
-            upstream_engine_ms: milliseconds("engine_service_total_ms"),
-            upstream_engine_iapi_ttft_ms: milliseconds("engine_iapi_ttft_total_ms"),
-            upstream_engine_service_ttft_ms: milliseconds("engine_service_ttft_total_ms"),
-            upstream_engine_iapi_tbt_ms: milliseconds("engine_iapi_tbt_across_engine_calls_ms"),
+            upstream_engine_ms: milliseconds(metrics, "engine_service_total_ms"),
+            upstream_engine_iapi_ttft_ms: milliseconds(metrics, "engine_iapi_ttft_total_ms"),
+            upstream_engine_service_ttft_ms: milliseconds(metrics, "engine_service_ttft_total_ms"),
+            upstream_engine_iapi_tbt_ms: milliseconds(
+                metrics,
+                "engine_iapi_tbt_across_engine_calls_ms",
+            ),
             upstream_engine_service_tbt_ms: milliseconds(
+                metrics,
                 "engine_service_tbt_across_engine_calls_ms",
             ),
         }

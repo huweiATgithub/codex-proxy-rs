@@ -344,10 +344,15 @@ impl CodexCanonicalDecoder {
         }
         if event_type == Some("responsesapi.websocket_timing") && self.started && !self.completed {
             // 无 ID 的官方计时帧仅属于当前已开始的响应，复用连接的尾帧不能跨边界归属
-            let response_id = value
-                .get("response_id")
-                .or_else(|| value.pointer("/response/id"));
-            if response_id.is_none_or(|id| id.as_str() == self.response_id.as_deref()) {
+            let response_ids = [
+                value.get("response_id"),
+                value.pointer("/response/id"),
+                value.pointer("/timing_metrics/response_id"),
+            ];
+            if response_ids.into_iter().flatten().all(|id| {
+                id.as_str()
+                    .is_some_and(|id| Some(id) == self.response_id.as_deref())
+            }) {
                 self.upstream_timing_metrics
                     .merge(ResponseTimingMetrics::from_event(&value));
             }
