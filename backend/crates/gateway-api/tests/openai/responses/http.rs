@@ -2279,6 +2279,7 @@ async fn buffered_response_commits_only_after_complete_json_is_encoded() {
 async fn buffered_response_collects_completed_output_items_without_rewriting_streams() {
     let message = json!({
         "id": "msg_test", "type": "message", "role": "assistant", "status": "completed",
+        "phase": "partial_answer",
         "content": [{"type": "output_text", "text": "完整文本", "annotations": []}],
         "future_item_field": {"keep": true}
     });
@@ -2288,6 +2289,7 @@ async fn buffered_response_collects_completed_output_items_without_rewriting_str
     });
     let terminal = json!({
         "id": "resp_test", "status": "completed", "output": [],
+        "end_turn": false,
         "usage": {"input_tokens": 20, "output_tokens": 8, "total_tokens": 28},
         "future_terminal_field": {"keep": true}
     });
