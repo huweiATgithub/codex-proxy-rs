@@ -31,7 +31,6 @@ pub(super) enum ExchangeAction {
 }
 
 pub(super) struct ReducedWebSocketEvent {
-    pub(super) created_response_id: Option<String>,
     pub(super) action: ExchangeAction,
     pub(super) diagnostic_event_type: Option<String>,
     pub(super) turn_state_update: Option<String>,
@@ -46,7 +45,6 @@ pub(super) fn reduce_websocket_event(
     // 不可解析的帧不承载可路由的事件类型，忽略
     let Ok(value) = serde_json::from_str::<Value>(raw) else {
         return Ok(ReducedWebSocketEvent {
-            created_response_id: None,
             action: ExchangeAction::Ignore,
             diagnostic_event_type: None,
             turn_state_update: None,
@@ -58,7 +56,6 @@ pub(super) fn reduce_websocket_event(
         metadata.rate_limit_headers.extend(headers);
         return Ok(ReducedWebSocketEvent {
             action: ExchangeAction::RateLimits(parsed),
-            created_response_id: None,
             diagnostic_event_type,
             turn_state_update: None,
         });
@@ -98,10 +95,6 @@ pub(super) fn reduce_websocket_event(
         None => ExchangeAction::Ignore,
     };
     Ok(ReducedWebSocketEvent {
-        created_response_id: (event == Some("response.created"))
-            .then(|| value.pointer("/response/id").and_then(Value::as_str))
-            .flatten()
-            .map(ToOwned::to_owned),
         action,
         diagnostic_event_type,
         turn_state_update,

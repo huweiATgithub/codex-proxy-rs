@@ -309,13 +309,16 @@ turn metadata 的 `workspaces` 也会保留仓库绝对路径、Git 远端地址
 已升级的 Responses 连接在入站解析前和出站写入前经过 `websocket` 中间件，完整消息与主动发送接口见
 [SDK 洋葱中间件](../backend/crates/gateway-plugin/sdk/docs/capabilities.md#洋葱中间件)。下述规则描述默认协议处理
 
-Responses WebSocket 接受文本 `response.create` 和 `response.interrupt`，创建请求在同一连接串行执行。当前响应期间收到的后续业务帧
+Responses WebSocket 接受文本消息，`response.create` 在同一连接串行执行。当前响应期间收到的后续创建请求
 留在有界接收队列中，待当前响应完成终结和写出后再逐条校验、准入与执行，不因请求提前到达而断开。
-接收队列容量为 32 个事件，超载仍关闭连接；Ping/Pong、客户端关闭和服务关闭不等待队列中的请求执行。
-活动响应期间会即时处理 `{"type":"response.interrupt","response_id":"当前响应 ID","mode":"discard_partial_items"}`。
-中断只能发送到该执行占用的原上游 WS，不重新选号或创建推理 attempt；重复中断合并为一次发送。
-ID 不匹配、没有可中断响应、实际走 HTTP 或 Provider 不支持控制时返回 `400` 协议错误，原执行继续；
-客户端需要终止这类执行时可关闭连接，后续按既有续接合同恢复。
+接收队列容量为 32 个事件，超载仍关闭连接；Ping/Pong、客户端关闭和服务关闭不等待队列中的请求执行
+
+其余文本消息原样发送到当前执行绑定的原上游 WebSocket，包括
+`response.interrupt` 和未知类型；类型、响应 ID、模式及扩展字段由上游校验。
+控制帧不重新选号、不创建推理 attempt，也不合并重复消息。响应结束后原连接仍可接收控制帧并返回上游事件；
+下一轮执行使用新绑定的控制入口。尚未建立原连接、原连接已失效、实际走 HTTP 或 Provider 未提供控制通道时返回 `400`，
+不能通过控制帧新建上游连接
+
 中断后继续转发上游事件与终态；只有 `response.incomplete` 的 `incomplete_details.reason` 为
 `interrupted` 时，才按官方中断语义保留原连接续接能力。部分输出是否被丢弃以上游终态为准。
 控制帧发送成功不等于上游已确认中断；若上游仍返回 `response.completed`，按正常完成处理
