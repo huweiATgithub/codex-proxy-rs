@@ -291,7 +291,7 @@ SSE 注释保活用于防止传输链路空闲断开，不会重置 Codex 等待
 
 管理端生成的 CC Switch 一键导入包含连接信息和当前 Key 的日／周额度查询，默认每 30 分钟刷新。
 查询地址和凭据随导入生成，在 CC Switch 中修改 Provider 的地址或 Key 后，需重新导入以同步用量查询。
-导入不包含下方模板的原生生图和 WebSocket 设置。需要原生生图时，使用下方配置直连 CPR，
+导入不包含下方模板的远程压缩、原生生图和 WebSocket 设置。需要这些设置时，使用下方配置直连 CPR，
 避免 CC Switch 切换或接管后重写 Provider 配置
 
 Linux/macOS 默认目录为 `~/.codex/`，Windows 为 `%USERPROFILE%\.codex\`；
@@ -318,6 +318,10 @@ requires_openai_auth = false
 # 填写代理密钥，真实账号由服务端管理。
 experimental_bearer_token = "<client-api-key>"
 
+[model_providers.OpenAI.capabilities]
+# Codex 0.162.0+ 显式启用 V2 远程压缩，不依赖 Provider 名称识别
+remote_compaction = "v2"
+
 [model_providers.OpenAI.http_headers]
 # 供客户端识别服务端托管认证，本身不是密钥。
 X-OpenAI-Actor-Authorization = "proxy-managed"
@@ -330,6 +334,9 @@ goals = true
 `OpenAI` 是自定义 Provider ID，大小写要与 `model_provider` 一致。合并配置时修改已有表，
 不要重复添加 `[features]` 或 Provider 表。更换模型时也要检查其支持的推理强度。
 密钥以明文保存，文件仅供本人读取，不要提交到 Git。接入代理不需要扩大命令沙箱的联网或文件权限
+
+V2 远程压缩通过 Responses 接口发送 `compaction_trigger`，网关和上游需支持该协议。
+若 Provider ID 改为 `custom`，相应能力配置也要改到 `[model_providers.custom.capabilities]`
 
 需要指定完整模型目录时，在账号的模型列表中导出所选 Codex 模型，并在 `config.toml` 顶层设置
 `model_catalog_json = "/absolute/path/to/cpr-model-catalog.json"`。导出文件不含账号凭据；
