@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BaseButton, BasePopover } from '@codex-proxy/ui'
+import { ZButton, ZPopover } from '@codex-proxy/ui'
 import { Info } from '@lucide/vue'
 import { shallowRef, useId } from 'vue'
 
@@ -8,18 +8,17 @@ const infoId = useId()
 </script>
 
 <template>
-  <BasePopover v-model="infoOpen" placement="bottom-start" trigger="hover-click">
-    <template #trigger>
-      <BaseButton
-        size="sm"
-        variant="ghost"
+  <ZPopover v-model="infoOpen" placement="bottom-start" trigger="hover-click">
+    <template #reference>
+      <ZButton
+        size="small" variant="text"
         aria-label="价格单位：美元 / 百万 Token，查看定价说明"
         :aria-expanded="infoOpen"
         :aria-controls="infoOpen ? infoId : undefined"
       >
         <span aria-hidden="true">USD / 1M Tokens</span>
         <Info class="size-3.5" aria-hidden="true" />
-      </BaseButton>
+      </ZButton>
     </template>
     <div :id="infoId" class="grid w-72 gap-2 p-3 text-cp-xs leading-relaxed text-cp-text-secondary">
       <p class="m-0 font-emphasis text-cp-text">
@@ -32,5 +31,5 @@ const infoId = useId()
         表中为标准档生效价，图像模型显示图像 Token 价格，划线为来源价，其他档位在编辑中查看
       </p>
     </div>
-  </BasePopover>
+  </ZPopover>
 </template>

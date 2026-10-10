@@ -1,7 +1,7 @@
 import type { Ref } from 'vue'
 import type { Account, AccountModelAccess } from '@/api'
 
-import { toast } from '@codex-proxy/ui'
+import { ZNotification } from '@codex-proxy/ui'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { batchUpdateAccounts } from '@/api'
 import { useAsyncAction } from '@/composables/useAsyncAction'
@@ -64,20 +64,20 @@ export function useAccountBatchEditor(options: {
       return
     const modelError = accountModelAccessError(modelAccess.value)
     if (modelError) {
-      toast.warning(modelError)
+      ZNotification.warning({ message: modelError })
       return
     }
     if (!hasChanges.value) {
-      toast.warning('请选择需要更新的设置')
+      ZNotification.warning({ message: '请选择需要更新的设置' })
       return
     }
     const scheduling = parseAccountSchedulingForm(editedFields.value.has('concurrencyLimit') ? concurrencyLimit.value : '', editedFields.value.has('weight') ? weight.value : '1')
     if (proxyMode.value === 'proxy' && !proxyId.value.trim()) {
-      toast.warning('请选择已通过测试的代理')
+      ZNotification.warning({ message: '请选择已通过测试的代理' })
       return
     }
     if (!scheduling.valid) {
-      toast.warning(scheduling.message)
+      ZNotification.warning({ message: scheduling.message })
       return
     }
 
@@ -94,7 +94,7 @@ export function useAccountBatchEditor(options: {
       })
       showBatchEditModal.value = false
       options.selectedIds.value = new Set()
-      toast.success(`已更新 ${accountIds.length} 个账号`)
+      ZNotification.success({ message: `已更新 ${accountIds.length} 个账号` })
       void Promise.allSettled([options.reloadAccounts(), options.reloadGroups()])
     }, { onError: () => void options.reloadAccounts() })
   }

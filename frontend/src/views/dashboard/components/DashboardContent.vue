@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { dashboardSnapshotView, dashboardTrendView } from '../presenter'
 import type { DashboardTrendKind } from '@/api/modules/dashboard'
-import { BaseIconButton, BasePageHeader } from '@codex-proxy/ui'
+import { ZIconButton, ZPageHeader } from '@codex-proxy/ui'
 
 import { RefreshCw } from '@lucide/vue'
 
@@ -53,16 +53,16 @@ const trendKind = defineModel<DashboardTrendKind>('trendKind', { required: true 
 
 <template>
   <div class="w-full">
-    <BasePageHeader title="系统概览">
+    <ZPageHeader title="系统概览">
       <template #description>
         <span>当日统计</span>
         <DashboardHeartbeat :updated-at="lastRefreshedAt" />
       </template>
       <template #actions>
-        <BaseIconButton
+        <ZIconButton
           class="text-cp-primary-text"
-          size="md"
-          label="刷新概览"
+          size="default"
+          aria-label="刷新概览"
           :loading="loading || refreshing"
           :disabled="loading || refreshing"
           @click="emit('refresh')"
@@ -71,9 +71,9 @@ const trendKind = defineModel<DashboardTrendKind>('trendKind', { required: true 
             <RefreshCw class="animate-spin motion-reduce:animate-none" :size="19" />
           </template>
           <RefreshCw :size="19" />
-        </BaseIconButton>
+        </ZIconButton>
       </template>
-    </BasePageHeader>
+    </ZPageHeader>
 
     <section
       class="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4 2xl:gap-6"

@@ -1,5 +1,5 @@
 import type { Account, AccountImportTask } from '@/api'
-import { toast } from '@codex-proxy/ui'
+import { ZNotification } from '@codex-proxy/ui'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { createAccountImportTask, importAccounts } from '@/api'
 import { useAsyncAction } from '@/composables/useAsyncAction'
@@ -92,7 +92,7 @@ export function useAccountOnboarding(options: {
       })
       showCreateModal.value = false
       options.onImportTaskCreated(task)
-      toast.success('导入任务已创建')
+      ZNotification.success({ message: '导入任务已创建' })
     })
   }
 
@@ -119,7 +119,7 @@ export function useAccountOnboarding(options: {
       })
     }
     catch (cause) {
-      toast.error(errorMessage(cause, '启动授权失败'))
+      ZNotification.error({ message: errorMessage(cause, '启动授权失败') })
     }
   }
 
@@ -142,7 +142,7 @@ export function useAccountOnboarding(options: {
 
   async function finishCreate(message: string) {
     showCreateModal.value = false
-    toast.success(message)
+    ZNotification.success({ message })
     await options.reload()
   }
 

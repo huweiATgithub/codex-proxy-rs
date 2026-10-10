@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { BarSeriesOption, EChartsOption, LineSeriesOption } from 'echarts'
 import type { getUsageRecordInsightsOverview } from '@/api'
-import { BaseCard, BaseEmpty } from '@codex-proxy/ui'
+import { ZCard, ZEmpty } from '@codex-proxy/ui'
 
 import { BarChart } from 'echarts/charts'
 import { use } from 'echarts/core'
@@ -156,7 +156,7 @@ function formatTooltip(params: unknown) {
 </script>
 
 <template>
-  <BaseCard
+  <ZCard
     as="article"
     title="请求健康"
     :description="`按${granularityText}区分服务结果、取消、未完成与调用方错误`"
@@ -185,9 +185,9 @@ function formatTooltip(params: unknown) {
           </div>
         </div>
         <BaseChart v-if="hasData" :option="chartOption" :height="210" />
-        <BaseEmpty
+        <ZEmpty
           v-else
-          size="sm"
+          size="small"
           surface="none"
           :title="loading ? '正在加载请求健康数据' : '暂无请求健康数据'"
           description="当前范围没有可绘制的请求记录"
@@ -195,5 +195,5 @@ function formatTooltip(params: unknown) {
         />
       </div>
     </template>
-  </BaseCard>
+  </ZCard>
 </template>

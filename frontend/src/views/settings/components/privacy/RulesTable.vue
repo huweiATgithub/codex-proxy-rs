@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { PrivacyRule } from '@/api/modules/settings/privacy'
-import { BaseIconButton, BaseMenuItem, BasePopover, BaseSwitch, BaseTable, defineTableColumns } from '@codex-proxy/ui'
+import { defineTableColumns, ZIconButton, ZMenuItem, ZPopover, ZSwitch, ZTable } from '@codex-proxy/ui'
 import { ArrowDown, ArrowUp, Copy, MoreHorizontal, Pencil, Trash2 } from '@lucide/vue'
 import { shallowRef } from 'vue'
 import { actions, scopes } from './presets'
@@ -24,10 +24,10 @@ const columns = defineTableColumns<PrivacyRule>([
 </script>
 
 <template>
-  <BaseTable :columns="columns" :rows="rules" density="compact" empty-text="暂无规则，添加一条或从预设开始">
+  <ZTable :columns="columns" :data="rules" size="small" empty-text="暂无规则，添加一条或从预设开始">
     <template #enabled="{ row }">
       <div class="flex items-center justify-center">
-        <BaseSwitch :disabled="disabled" :model-value="row.enabled" :label="`启用规则：${row.name}`" @update:model-value="emit('toggle', row, $event)" />
+        <ZSwitch :disabled="disabled" :model-value="row.enabled" :aria-label="`启用规则：${row.name}`" @update:model-value="emit('toggle', row, $event)" />
       </div>
     </template>
     <template #name="{ row }">
@@ -44,39 +44,39 @@ const columns = defineTableColumns<PrivacyRule>([
     </template>
     <template #actions="{ row }">
       <div class="flex items-center justify-end gap-1">
-        <BaseIconButton size="sm" :disabled="disabled" variant="ghost" :label="`编辑${row.name}`" @click="emit('edit', row)">
+        <ZIconButton size="small" :disabled="disabled" :aria-label="`编辑${row.name}`" @click="emit('edit', row)">
           <Pencil class="size-3.5" />
-        </BaseIconButton>
-        <BasePopover :model-value="activeMenu === row.id" @update:model-value="activeMenu = $event ? row.id : ''">
-          <template #trigger>
-            <BaseIconButton size="sm" :disabled="disabled" :label="`${row.name}的更多操作`" variant="ghost">
+        </ZIconButton>
+        <ZPopover :model-value="activeMenu === row.id" @update:model-value="activeMenu = $event ? row.id : ''">
+          <template #reference>
+            <ZIconButton size="small" :disabled="disabled" :aria-label="`${row.name}的更多操作`">
               <MoreHorizontal class="size-3.5" />
-            </BaseIconButton>
+            </ZIconButton>
           </template>
           <div class="w-40 p-1.5">
-            <BaseMenuItem :disabled="rules[0]?.id === row.id" @click="emit('move', rules.indexOf(row), -1); activeMenu = ''">
+            <ZMenuItem :disabled="rules[0]?.id === row.id" @click="emit('move', rules.indexOf(row), -1); activeMenu = ''">
               <template #icon>
                 <ArrowUp class="size-3.5" />
               </template>上移
-            </BaseMenuItem>
-            <BaseMenuItem :disabled="rules.at(-1)?.id === row.id" @click="emit('move', rules.indexOf(row), 1); activeMenu = ''">
+            </ZMenuItem>
+            <ZMenuItem :disabled="rules.at(-1)?.id === row.id" @click="emit('move', rules.indexOf(row), 1); activeMenu = ''">
               <template #icon>
                 <ArrowDown class="size-3.5" />
               </template>下移
-            </BaseMenuItem>
-            <BaseMenuItem @click="emit('duplicate', row); activeMenu = ''">
+            </ZMenuItem>
+            <ZMenuItem @click="emit('duplicate', row); activeMenu = ''">
               <template #icon>
                 <Copy class="size-3.5" />
               </template>复制
-            </BaseMenuItem>
-            <BaseMenuItem tone="destructive" @click="emit('remove', row); activeMenu = ''">
+            </ZMenuItem>
+            <ZMenuItem type="danger" @click="emit('remove', row); activeMenu = ''">
               <template #icon>
                 <Trash2 class="size-3.5" />
               </template>删除规则
-            </BaseMenuItem>
+            </ZMenuItem>
           </div>
-        </BasePopover>
+        </ZPopover>
       </div>
     </template>
-  </BaseTable>
+  </ZTable>
 </template>

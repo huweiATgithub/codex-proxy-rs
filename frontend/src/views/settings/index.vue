@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BaseButton, BaseIconButton, BasePageHeader, BaseSegmented, BaseSelect } from '@codex-proxy/ui'
+import { ZButton, ZIconButton, ZPageHeader, ZSegmented, ZSelect } from '@codex-proxy/ui'
 
 import { Save, Undo2 } from '@lucide/vue'
 import { computed, reactive, shallowRef, watch } from 'vue'
@@ -43,7 +43,7 @@ const isBasicSection = computed(() => section.value !== 'pricing' && section.val
 const visited = reactive(new Set<string>())
 const settingsVisited = shallowRef(false)
 
-function switchSection(value: string): void {
+function switchSection(value = 'runtime'): void {
   void router.push(value === 'runtime' ? '/settings' : `/settings/${value}`)
 }
 
@@ -93,17 +93,17 @@ watch(section, (value) => {
 
 <template>
   <div class="w-full" :class="section === 'pricing' ? 'flex h-[calc(100dvh-2rem)] flex-none! flex-col min-[961px]:h-[calc(100dvh-3rem)]' : undefined">
-    <BasePageHeader title="系统设置" description="管理网关调度、上游配置、模型定价、安全访问与数据备份" />
+    <ZPageHeader title="系统设置" description="管理网关调度、上游配置、模型定价、安全访问与数据备份" />
 
     <div class="mt-4 flex min-h-cp-control shrink-0 flex-wrap items-center justify-between gap-3">
-      <BaseSegmented
+      <ZSegmented
         :model-value="section"
-        label="设置分区"
+        aria-label="设置分区"
         class="hidden! bg-(--cp-input-bg)! sm:inline-grid!"
         :options="sectionOptions"
         @update:model-value="switchSection"
       />
-      <BaseSelect
+      <ZSelect
         :model-value="section"
         aria-label="设置分区"
         class="w-full sm:hidden"
@@ -112,15 +112,15 @@ watch(section, (value) => {
       />
       <div v-if="isBasicSection || hasChanges" class="ml-auto flex items-center justify-end gap-2">
         <span v-if="hasChanges" class="mr-1 size-1.5 shrink-0 rounded-full bg-cp-warning" aria-hidden="true" />
-        <BaseIconButton v-if="hasChanges" label="撤销全部基础设置更改" variant="secondary" :disabled="saving || loading" @click="resetSettings">
+        <ZIconButton v-if="hasChanges" aria-label="撤销全部基础设置更改" variant="solid" :disabled="saving || loading" @click="resetSettings">
           <Undo2 class="size-4" />
-        </BaseIconButton>
-        <BaseButton variant="primary" :loading="saving" :disabled="loading || !hasChanges || !!error" @click="saveSettings">
+        </ZIconButton>
+        <ZButton type="primary" :loading="saving" :disabled="loading || !hasChanges || !!error" @click="saveSettings">
           <template #icon>
             <Save class="size-4" />
           </template>
           {{ saving ? '保存中...' : '保存基础设置' }}
-        </BaseButton>
+        </ZButton>
       </div>
     </div>
 
@@ -129,9 +129,9 @@ watch(section, (value) => {
         <p class="m-0 text-cp">
           设置加载失败：{{ error }}
         </p>
-        <BaseButton :loading="loading" @click="loadSettings()">
+        <ZButton :loading="loading" @click="loadSettings()">
           重新加载
-        </BaseButton>
+        </ZButton>
       </div>
 
       <SettingsAccessSection

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BaseFormItem, BaseSelect } from '@codex-proxy/ui'
+import { ZFormItem, ZSelect } from '@codex-proxy/ui'
 import { computed } from 'vue'
 import { useProxyCatalog } from '@/composables/useProxyCatalog'
 
@@ -34,7 +34,7 @@ const selection = computed({
 </script>
 
 <template>
-  <BaseFormItem label="出站隧道" :error="error">
-    <BaseSelect v-model="selection" class="w-full" :options="options" :disabled="disabled || loading" aria-label="出站隧道" />
-  </BaseFormItem>
+  <ZFormItem label="出站隧道" :error="error">
+    <ZSelect v-model="selection" class="w-full" :options="options" :disabled="disabled || loading" aria-label="出站隧道" />
+  </ZFormItem>
 </template>

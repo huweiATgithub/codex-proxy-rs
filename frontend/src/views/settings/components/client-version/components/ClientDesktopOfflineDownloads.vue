@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ClientDownloadPackage, CodexDesktopWindowsDownloads } from '@/api'
-import { BaseButton, BaseEmpty, BaseIconButton, BaseSkeleton } from '@codex-proxy/ui'
+import { ZButton, ZEmpty, ZIconButton, ZSkeleton } from '@codex-proxy/ui'
 
 import { ArrowDownToLine, PackageOpen, RefreshCw } from '@lucide/vue'
 
@@ -75,15 +75,14 @@ function formatFileSize(value: number | null): string {
           </p>
         </div>
       </div>
-      <BaseIconButton
-        :label="loading ? '正在重新提取离线下载链接' : '重新提取离线下载链接'"
-        variant="secondary"
+      <ZIconButton
+        :aria-label="loading ? '正在重新提取离线下载链接' : '重新提取离线下载链接'" variant="solid"
         :disabled="loading"
         :aria-busy="loading || undefined"
         @click="emit('refresh')"
       >
         <RefreshCw class="size-4" :class="loading && 'animate-spin motion-reduce:animate-none'" />
-      </BaseIconButton>
+      </ZIconButton>
     </div>
 
     <p
@@ -103,25 +102,25 @@ function formatFileSize(value: number | null): string {
 
     <div v-if="loading && !downloads" class="grid gap-3 sm:grid-cols-2" aria-label="正在提取离线安装包">
       <div v-for="index in 2" :key="index" class="grid gap-3 rounded-cp bg-cp-bg-container p-4 shadow-cp-tertiary">
-        <BaseSkeleton class="h-4 w-28" />
-        <BaseSkeleton class="h-3 w-44" shape="text" />
-        <BaseSkeleton class="h-9 w-full" />
+        <ZSkeleton class="h-4 w-28" />
+        <ZSkeleton class="h-3 w-44" shape="text" />
+        <ZSkeleton class="h-9 w-full" />
       </div>
     </div>
 
-    <BaseEmpty
+    <ZEmpty
       v-else-if="error && !downloads"
       title="离线安装包加载失败"
       :description="error"
       :icon="PackageOpen"
-      size="sm"
+      size="small"
     >
       <template #action>
-        <BaseButton size="sm" :loading="loading" @click="emit('retry')">
+        <ZButton size="small" :loading="loading" @click="emit('retry')">
           重试
-        </BaseButton>
+        </ZButton>
       </template>
-    </BaseEmpty>
+    </ZEmpty>
 
     <div v-else-if="downloads" class="grid gap-3 sm:grid-cols-2">
       <article

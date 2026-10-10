@@ -313,7 +313,7 @@ Client Key 费用账本独立累计各次 attempt 的实际费用，不能因请
 
 ### 3.4 前端模块职责
 
-`frontend/src` 持有应用状态和业务交互，基础组件与主题算法由 `@codex-proxy/ui` 提供：
+`frontend/src` 持有应用状态和业务交互，基础组件与主题算法由 `@codex-proxy/ui` 提供，组件目录与合同见 [UI 组件架构](../modules/ui/playground/guide/architecture.md)：
 
 | 入口 | 职责 |
 | --- | --- |

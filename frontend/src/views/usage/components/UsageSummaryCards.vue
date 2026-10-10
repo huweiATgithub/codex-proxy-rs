@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { getUsageRecordSummary } from '@/api'
-import { BaseCard, BaseMotionIcon } from '@codex-proxy/ui'
+import { ZCard, ZMotionIcon } from '@codex-proxy/ui'
 
 import { Activity, Database, FileText, Timer } from '@lucide/vue'
 import { computed } from 'vue'
@@ -51,16 +51,16 @@ const items = computed(() => [
 
 <template>
   <section class="mt-5 grid shrink-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="使用概览">
-    <BaseCard
+    <ZCard
       v-for="item in items"
       :key="item.key"
       as="article"
       padding="compact"
       class="grid min-h-23 grid-cols-[36px_minmax(0,1fr)] items-stretch gap-3"
     >
-      <BaseMotionIcon class="inline-flex size-9 shrink-0 items-center justify-center rounded-cp" :class="item.tone">
+      <ZMotionIcon class="inline-flex size-9 shrink-0 items-center justify-center rounded-cp" :class="item.tone">
         <component :is="item.icon" class="size-4.5" />
-      </BaseMotionIcon>
+      </ZMotionIcon>
       <div class="flex min-w-0 flex-col justify-between py-0.5">
         <span class="block text-cp-sm leading-none font-bold text-cp-text-quaternary">
           {{ item.label }}
@@ -72,6 +72,6 @@ const items = computed(() => [
           {{ item.detail }}
         </span>
       </div>
-    </BaseCard>
+    </ZCard>
   </section>
 </template>

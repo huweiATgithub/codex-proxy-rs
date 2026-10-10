@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { OutboundProxyRecord } from '@/api'
-import { BaseButton, BaseCard, BaseConfirmModal, BaseIconButton, BaseInput, BasePageHeader, BaseTable, BaseTablePagination } from '@codex-proxy/ui'
+import { ZButton, ZCard, ZConfirmDialog, ZIconButton, ZInput, ZPageHeader, ZPagination, ZTable } from '@codex-proxy/ui'
 import { LockKeyhole, MapPin, Pencil, Plus, Search, Trash2, Users, Wifi } from '@lucide/vue'
 import { shallowRef } from 'vue'
 import ProxyAccountsModal from './components/ProxyAccountsModal.vue'
@@ -43,32 +43,32 @@ const inspected = shallowRef<OutboundProxyRecord | null>(null)
 
 <template>
   <div class="flex h-full min-h-0 w-full flex-col overflow-hidden">
-    <BasePageHeader
+    <ZPageHeader
       class="h-17"
       title="代理管理"
       description="管理账号使用的代理，测试连接并查看出口 IP"
     />
-    <BaseCard class="mt-5 flex h-[calc(100dvh-136px)] min-h-125 flex-col">
+    <ZCard class="mt-5 flex h-[calc(100dvh-136px)] min-h-125 flex-col">
       <template #header>
         <div class="flex w-full flex-col gap-3 sm:flex-row sm:items-center">
-          <BaseInput v-model="search" class="sm:w-80" aria-label="搜索代理" placeholder="搜索代理名称...">
+          <ZInput v-model="search" class="sm:w-80" aria-label="搜索代理" placeholder="搜索代理名称...">
             <template #prefix>
               <Search class="size-4.5 text-cp-text-tertiary" />
             </template>
-          </BaseInput>
+          </ZInput>
           <div class="flex shrink-0 items-center justify-end gap-2 sm:ml-auto">
-            <BaseButton variant="primary" @click="openForm()">
+            <ZButton type="primary" @click="openForm()">
               <template #icon>
                 <Plus class="size-4" />
               </template>
               新增代理
-            </BaseButton>
+            </ZButton>
           </div>
         </div>
       </template>
       <template #body>
         <div class="flex h-full min-h-0 flex-col">
-          <BaseTable class="min-h-0 flex-1" :columns="proxyColumns" :rows="proxies" :loading="loading" :empty-text="search.trim() ? '没有找到匹配的代理，请尝试其他名称' : '暂无代理，请点击新增代理添加'">
+          <ZTable class="min-h-0 flex-1" :columns="proxyColumns" :data="proxies" :loading="loading" :empty-text="search.trim() ? '没有找到匹配的代理，请尝试其他名称' : '暂无代理，请点击新增代理添加'">
             <template #name="{ row }">
               <span class="block truncate text-cp text-cp-text" :title="row.name">{{ row.name }}</span>
             </template>
@@ -121,22 +121,22 @@ const inspected = shallowRef<OutboundProxyRecord | null>(null)
             </template>
             <template #actions="{ row }">
               <div class="flex items-center gap-1">
-                <BaseIconButton size="sm" label="测试代理" :loading="testingIds.has(row.id)" :disabled="testingIds.has(row.id)" @click="checkProxy(row)">
+                <ZIconButton size="small" aria-label="测试代理" :loading="testingIds.has(row.id)" :disabled="testingIds.has(row.id)" @click="checkProxy(row)">
                   <Wifi class="size-3.5 text-cp-link" />
-                </BaseIconButton>
-                <BaseIconButton size="sm" label="编辑代理" :disabled="testingIds.has(row.id)" @click="openForm(row)">
+                </ZIconButton>
+                <ZIconButton size="small" aria-label="编辑代理" :disabled="testingIds.has(row.id)" @click="openForm(row)">
                   <Pencil class="size-3.5 text-cp-link" />
-                </BaseIconButton>
-                <BaseIconButton size="sm" :label="row.accountCount ? '代理正在被账号使用' : '删除代理'" :disabled="row.accountCount > 0 || testingIds.has(row.id)" @click="requestDelete(row)">
+                </ZIconButton>
+                <ZIconButton size="small" :aria-label="row.accountCount ? '代理正在被账号使用' : '删除代理'" :disabled="row.accountCount > 0 || testingIds.has(row.id)" @click="requestDelete(row)">
                   <Trash2 class="size-3.5 text-cp-error" />
-                </BaseIconButton>
+                </ZIconButton>
               </div>
             </template>
-          </BaseTable>
-          <BaseTablePagination :pagination="pagination" :loading="loading" @page-change="setPage" @page-size-change="setPageSize" />
+          </ZTable>
+          <ZPagination v-bind="pagination" :disabled="loading" @current-change="setPage" @size-change="setPageSize" />
         </div>
       </template>
-    </BaseCard>
+    </ZCard>
 
     <ProxyFormModal
       v-model="showForm"
@@ -154,11 +154,11 @@ const inspected = shallowRef<OutboundProxyRecord | null>(null)
       @detect-location="detectLocation"
       @after-leave="clearCredentials"
     />
-    <BaseConfirmModal v-model="showDelete" title="删除代理" destructive :loading="deleting" @confirm="confirmDelete">
+    <ZConfirmDialog v-model="showDelete" title="删除代理" destructive :loading="deleting" @confirm="confirmDelete">
       <p class="m-0">
         确定删除“{{ pendingDelete?.name }}”吗？
       </p>
-    </BaseConfirmModal>
+    </ZConfirmDialog>
     <ProxyAccountsModal v-model="showAccounts" :proxy="inspected" @removed="loadProxies({ silent: true })" />
   </div>
 </template>

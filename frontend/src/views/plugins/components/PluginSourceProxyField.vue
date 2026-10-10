@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BaseFormItem, BaseSelect } from '@codex-proxy/ui'
+import { ZFormItem, ZSelect } from '@codex-proxy/ui'
 
 import { computed } from 'vue'
 import { useProxyCatalog } from '@/composables/useProxyCatalog'
@@ -23,13 +23,13 @@ const options = computed(() => [
 </script>
 
 <template>
-  <BaseFormItem label="下载代理">
-    <BaseSelect
+  <ZFormItem label="下载代理">
+    <ZSelect
       v-model="proxyId"
       :options="options"
       :disabled="disabled || loading"
       class="w-full"
       aria-label="下载代理"
     />
-  </BaseFormItem>
+  </ZFormItem>
 </template>

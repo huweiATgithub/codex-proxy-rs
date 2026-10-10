@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { CodexPrivacyPolicy, PrivacyRule } from '@/api/modules/settings/privacy'
-import { BaseButton, BaseCard, BaseIconButton, BaseMenuItem, BasePopover, BaseSelect, BaseSwitch } from '@codex-proxy/ui'
+import { ZButton, ZCard, ZIconButton, ZMenuItem, ZPopover, ZSelect, ZSwitch } from '@codex-proxy/ui'
 import { ChevronDown, CircleHelp, Play, Plus } from '@lucide/vue'
 import { shallowRef } from 'vue'
 import PolicyPreview from './PolicyPreview.vue'
@@ -54,49 +54,49 @@ function move(index: number, step: number) {
 </script>
 
 <template>
-  <BaseCard id="privacy-policy" title="Codex 隐私策略" description="按自定义规则替换或移除请求中的隐私信息">
+  <ZCard id="privacy-policy" title="Codex 隐私策略" description="按自定义规则替换或移除请求中的隐私信息">
     <template #actions>
-      <BaseSwitch v-model="model.enabled" label="启用请求规则" active-text="启用" inactive-text="关闭" inline-prompt :width="56" :disabled="disabled" />
+      <ZSwitch v-model="model.enabled" aria-label="启用请求规则" active-text="启用" inactive-text="关闭" inline-prompt :width="56" :disabled="disabled" />
     </template>
     <template #body>
       <div class="grid gap-3">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div class="flex flex-wrap items-center gap-2">
-            <BaseButton size="sm" variant="secondary" :disabled="disabled || model.rules.length >= 32" @click="add()">
+            <ZButton size="small" :disabled="disabled || model.rules.length >= 32" @click="add()">
               <template #icon>
                 <Plus class="size-3.5" />
               </template>添加规则
-            </BaseButton>
-            <BasePopover v-model="presetOpen" placement="bottom-start">
-              <template #trigger>
-                <BaseButton size="sm" variant="ghost" :disabled="disabled || model.rules.length >= 32">
+            </ZButton>
+            <ZPopover v-model="presetOpen" placement="bottom-start">
+              <template #reference>
+                <ZButton size="small" variant="text" :disabled="disabled || model.rules.length >= 32">
                   从预设添加<ChevronDown class="ml-1 size-3" />
-                </BaseButton>
+                </ZButton>
               </template>
               <div class="w-48 p-1.5">
-                <BaseMenuItem v-for="preset in presets" :key="preset.name" @click="add({ ...preset.values, name: preset.name })">
+                <ZMenuItem v-for="preset in presets" :key="preset.name" @click="add({ ...preset.values, name: preset.name })">
                   {{ preset.name }}
-                </BaseMenuItem>
+                </ZMenuItem>
               </div>
-            </BasePopover>
+            </ZPopover>
           </div>
-          <BaseButton size="sm" variant="ghost" :disabled="disabled" @click="testOpen = true">
+          <ZButton size="small" variant="text" :disabled="disabled" @click="testOpen = true">
             <template #icon>
               <Play class="size-3.5" />
             </template>测试规则
-          </BaseButton>
+          </ZButton>
         </div>
         <RulesTable :rules="model.rules" :disabled="disabled" @edit="edit($event)" @toggle="toggle" @duplicate="duplicate" @remove="remove" @move="move" />
         <div v-if="model.rules.length" class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <span class="text-cp-xs text-cp-text-quaternary">按列表顺序执行</span>
           <div class="flex items-center gap-2">
             <span class="text-cp-xs text-cp-text-secondary">执行失败</span>
-            <BaseSelect v-model="model.onError" size="sm" class="w-34" :options="failureOptions" aria-label="规则执行失败" :disabled="disabled" />
-            <BasePopover trigger="hover-click" placement="top-end">
-              <template #trigger="{ open: helpOpen }">
-                <BaseIconButton size="sm" variant="ghost" label="规则执行说明" :title="undefined" class="hover:bg-transparent! active:bg-transparent!" :aria-expanded="helpOpen">
+            <ZSelect v-model="model.onError" size="small" class="w-34" :options="failureOptions" aria-label="规则执行失败" :disabled="disabled" />
+            <ZPopover trigger="hover-click" placement="top-end">
+              <template #reference="{ open: helpOpen }">
+                <ZIconButton size="small" aria-label="规则执行说明" :title="undefined" class="hover:bg-transparent! active:bg-transparent!" :aria-expanded="helpOpen">
                   <CircleHelp class="size-3.5" />
-                </BaseIconButton>
+                </ZIconButton>
               </template>
               <div class="max-w-72 space-y-2 p-3 text-cp-sm text-cp-text-secondary">
                 <p class="m-0">
@@ -105,12 +105,12 @@ function move(index: number, step: number) {
                   允许改写选定字段，认证、会话与工具行为的影响由配置者负责
                 </p>
               </div>
-            </BasePopover>
+            </ZPopover>
           </div>
         </div>
       </div>
     </template>
-  </BaseCard>
+  </ZCard>
   <RuleEditor v-model="editorOpen" :rule="selected" :is-new="isNew" :disabled="disabled" @apply="apply" />
   <PolicyPreview v-model="testOpen" :policy="model" />
 </template>

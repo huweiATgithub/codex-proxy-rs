@@ -1,7 +1,7 @@
 import type { rotationOptions } from '../constants'
 import type { AccountAffinity, CodexPrivacyPolicy, SmartSchedulingConfig } from '@/api'
 import type { ProviderRequestProfiles, ProviderRequestProfileUpdates } from '@/api/modules/settings/profiles'
-import { toast } from '@codex-proxy/ui'
+import { ZNotification } from '@codex-proxy/ui'
 import { cloneDeep, isEqual } from 'es-toolkit'
 
 import { computed, reactive, ref, shallowRef } from 'vue'
@@ -213,37 +213,37 @@ export function useSettingsForm() {
       return
     const { refreshMarginSeconds, refreshConcurrency, maxConcurrentPerAccount, openaiGuardianReservedConcurrency, openaiAccountAffinity, maxAccountRotations, openaiSessionAffinityTtlHours, requestIntervalMs, rotationStrategy, maxWaitingPerKey, maxWaitingPerAccount, concurrencyWaitTimeoutSeconds, responsesMaxDecompressedBodyMiB, accountAutoFreezeThreshold, accountAutoFreezeWindowSeconds, accountAutoFreezeDurationSeconds } = form
     if (!openaiAccountAffinity || maxAccountRotations === null || openaiSessionAffinityTtlHours === null || refreshMarginSeconds === null || refreshConcurrency === null || maxConcurrentPerAccount === null || openaiGuardianReservedConcurrency === null || requestIntervalMs === null || !rotationStrategy || maxWaitingPerKey === null || maxWaitingPerAccount === null || concurrencyWaitTimeoutSeconds === null) {
-      toast.warning('请完整填写并发、队列、凭据刷新参数和调度策略')
+      ZNotification.warning({ message: '请完整填写并发、队列、凭据刷新参数和调度策略' })
       return
     }
     if (!Number.isInteger(openaiSessionAffinityTtlHours) || openaiSessionAffinityTtlHours < 1 || openaiSessionAffinityTtlHours > 720) {
-      toast.warning('亲和时长应为 1～720 小时的整数')
+      ZNotification.warning({ message: '亲和时长应为 1～720 小时的整数' })
       return
     }
     if (!Number.isInteger(maxAccountRotations) || maxAccountRotations < 0 || maxAccountRotations > 31) {
-      toast.warning('最大换号次数应为 0～31 的整数，0 表示不换号')
+      ZNotification.warning({ message: '最大换号次数应为 0～31 的整数，0 表示不换号' })
       return
     }
     if (!Number.isInteger(maxConcurrentPerAccount) || maxConcurrentPerAccount < 0 || maxConcurrentPerAccount > 4294967295) {
-      toast.warning('默认账号并发上限应为 0～4294967295 的整数，0 表示不限制')
+      ZNotification.warning({ message: '默认账号并发上限应为 0～4294967295 的整数，0 表示不限制' })
       return
     }
     if (!Number.isInteger(openaiGuardianReservedConcurrency) || openaiGuardianReservedConcurrency < 0 || openaiGuardianReservedConcurrency > 4294967295) {
-      toast.warning('自动审批独立并发应为 0～4294967295 的整数，0 表示共用普通并发')
+      ZNotification.warning({ message: '自动审批独立并发应为 0～4294967295 的整数，0 表示共用普通并发' })
       return
     }
     if (responsesMaxDecompressedBodyMiB === null || !Number.isInteger(responsesMaxDecompressedBodyMiB) || responsesMaxDecompressedBodyMiB < 1
       || !Number.isSafeInteger(responsesMaxDecompressedBodyMiB * MIB)) {
-      toast.warning('Responses 解压上限应为有效的正整数（MiB）')
+      ZNotification.warning({ message: 'Responses 解压上限应为有效的正整数（MiB）' })
       return
     }
     if (![maxWaitingPerKey, maxWaitingPerAccount].every(value => Number.isInteger(value) && value >= 0 && value <= 1000)
       || !Number.isInteger(concurrencyWaitTimeoutSeconds) || concurrencyWaitTimeoutSeconds < 1 || concurrencyWaitTimeoutSeconds > 120) {
-      toast.warning('队列容量应为 0～1000 的整数，排队超时应为 1～120 秒的整数')
+      ZNotification.warning({ message: '队列容量应为 0～1000 的整数，排队超时应为 1～120 秒的整数' })
       return
     }
     if (minCodexDesktopVersionError.value || minCodexCliVersionError.value) {
-      toast.warning('请修正客户端最低版本格式')
+      ZNotification.warning({ message: '请修正客户端最低版本格式' })
       return
     }
     // 关闭时保留已保存的自定义值，未完成的草稿不阻止停止覆盖。
@@ -252,37 +252,37 @@ export function useSettingsForm() {
       : savedSettings.form.requestLocation
     const locationError = requestLocationError(requestLocation)
     if (locationError) {
-      toast.warning(locationError)
+      ZNotification.warning({ message: locationError })
       return
     }
     if (accountAutoFreezeThreshold === null || accountAutoFreezeWindowSeconds === null || accountAutoFreezeDurationSeconds === null) {
-      toast.warning('请完整填写过载保护参数')
+      ZNotification.warning({ message: '请完整填写过载保护参数' })
       return
     }
     if (!Number.isInteger(accountAutoFreezeThreshold) || accountAutoFreezeThreshold < 2 || accountAutoFreezeThreshold > 1000
       || !Number.isInteger(accountAutoFreezeWindowSeconds) || accountAutoFreezeWindowSeconds < 60 || accountAutoFreezeWindowSeconds > 3600
       || !Number.isInteger(accountAutoFreezeDurationSeconds) || accountAutoFreezeDurationSeconds < 300 || accountAutoFreezeDurationSeconds > 604800) {
-      toast.warning('失败次数阈值应为 2～1000，统计窗口为 60～3600 秒，冷却时长为 300～604800 秒')
+      ZNotification.warning({ message: '失败次数阈值应为 2～1000，统计窗口为 60～3600 秒，冷却时长为 300～604800 秒' })
       return
     }
     const probeModel = form.accountAutoFreezeProbeModel.trim()
     if (probeModel.length > 128) {
-      toast.warning('探测模型名称不能超过 128 个字符')
+      ZNotification.warning({ message: '探测模型名称不能超过 128 个字符' })
       return
     }
     const scheduleTime = form.accountWarmupScheduleTime.trim()
     const timeRegex = /^(?:[01]\d|2[0-3]):[0-5]\d(?:,(?:[01]\d|2[0-3]):[0-5]\d)*$/
     if (!scheduleTime || !timeRegex.test(scheduleTime)) {
-      toast.warning('预激活时间格式无效，请输入 HH:MM 格式（如 08:00 或 08:00,13:00）')
+      ZNotification.warning({ message: '预激活时间格式无效，请输入 HH:MM 格式（如 08:00 或 08:00,13:00）' })
       return
     }
     const warmupModel = form.accountWarmupModel.trim()
     if (form.accountWarmupEnabled && !warmupModel) {
-      toast.warning('启用预激活时请选择模型')
+      ZNotification.warning({ message: '启用预激活时请选择模型' })
       return
     }
     if (warmupModel.length > 128) {
-      toast.warning('预激活模型名称不能超过 128 个字符')
+      ZNotification.warning({ message: '预激活模型名称不能超过 128 个字符' })
       return
     }
     await saveAction.run(async () => {
@@ -327,7 +327,7 @@ export function useSettingsForm() {
         accountWarmupModel: warmupModel || null,
       })
       applySettings(result)
-      toast.success('设置已保存')
+      ZNotification.success({ message: '设置已保存' })
     }, {
       onError: (cause) => {
         if (cause instanceof ApiError && cause.status !== 409)

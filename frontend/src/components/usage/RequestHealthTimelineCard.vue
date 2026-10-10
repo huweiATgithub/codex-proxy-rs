@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DashboardHealthTimeline, DashboardHealthTimelinePoint } from '@/api'
-import { BaseCard, BasePopover } from '@codex-proxy/ui'
+import { ZCard, ZPopover } from '@codex-proxy/ui'
 
 import { usePreferredReducedMotion } from '@vueuse/core'
 import { gsap } from 'gsap'
@@ -183,7 +183,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <BaseCard as="article" :title="timeline.title" :description="timeline.description" class="w-full">
+  <ZCard as="article" :title="timeline.title" :description="timeline.description" class="w-full">
     <template #actions>
       <div class="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div
@@ -211,18 +211,18 @@ onBeforeUnmount(() => {
 
     <template #body>
       <div>
-        <BasePopover
+        <ZPopover
           v-model="popoverOpen"
           trigger="hover"
           placement="top"
           :offset="12"
-          :anchor-element="activeAnchor"
+          :reference-element="activeAnchor"
           :disabled="!activePoint"
           animate-position
           :arrow-surface-class="healthPopoverArrowSurfaceClasses"
           class="min-w-0 w-full"
         >
-          <template #trigger>
+          <template #reference>
             <div
               ref="timelineGrid" class="grid w-full grid-cols-[repeat(var(--timeline-columns),minmax(0,1fr))] items-end gap-x-0.5 gap-y-1 sm:grid-cols-[repeat(var(--timeline-columns-wide),minmax(0,1fr))]"
               :style="{ '--timeline-columns': Math.max(1, Math.ceil(points.length / 2)), '--timeline-columns-wide': Math.max(1, points.length) }"
@@ -263,8 +263,8 @@ onBeforeUnmount(() => {
           <div class="w-72 overflow-hidden rounded-cp-lg">
             <HealthTimelinePointPopover v-if="activePoint" :point="activePoint" />
           </div>
-        </BasePopover>
+        </ZPopover>
       </div>
     </template>
-  </BaseCard>
+  </ZCard>
 </template>

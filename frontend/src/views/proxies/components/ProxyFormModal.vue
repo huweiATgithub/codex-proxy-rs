@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { OutboundProxyRecord, OutboundProxyTest, RequestLocation } from '@/api'
-import { BaseButton, BaseForm, BaseFormItem, BaseIconButton, BaseInput, BaseModal, BaseSwitch } from '@codex-proxy/ui'
-import { Eye, EyeOff, LocateFixed, Save, Wifi } from '@lucide/vue'
-import { computed, shallowRef, watch } from 'vue'
+import { ZButton, ZDialog, ZForm, ZFormItem, ZIconButton, ZInput, ZSwitch } from '@codex-proxy/ui'
+import { LocateFixed, Save, Wifi } from '@lucide/vue'
+import { computed } from 'vue'
 import RequestLocationFields from '@/components/RequestLocationFields.vue'
 
 const props = defineProps<{
@@ -30,47 +30,34 @@ const manualLocationWarning = computed(() => {
     return location.message
   return ''
 })
-const showSecret = shallowRef(false)
 const busy = computed(() => props.saving || props.testingConnection || props.detectingLocation)
 const title = computed(() => props.proxy ? '编辑代理' : '新增代理')
 const connectionDescription = computed(() => props.proxy
   ? '留空保留当前连接和认证信息，填写新地址时，请包含所需的用户名和密码'
   : '支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H，可在地址中包含用户名和密码')
-
-watch(open, (value) => {
-  if (value)
-    showSecret.value = false
-})
 </script>
 
 <template>
-  <BaseModal v-model="open" :title="title" size="md" :dismissible="!busy">
-    <BaseForm class="grid gap-5">
-      <BaseFormItem label="代理名称" required>
-        <BaseInput v-model="name" maxlength="100" :disabled="busy" aria-label="代理名称" placeholder="请输入代理名称" />
-      </BaseFormItem>
-      <BaseFormItem label="代理地址" :required="!proxy" :description="connectionDescription">
-        <BaseInput
+  <ZDialog v-model="open" :title="title" width="36rem" :show-close="!busy" :close-on-click-modal="!busy" :close-on-press-escape="!busy">
+    <ZForm class="grid gap-5">
+      <ZFormItem label="代理名称" required>
+        <ZInput v-model="name" maxlength="100" :disabled="busy" aria-label="代理名称" placeholder="请输入代理名称" />
+      </ZFormItem>
+      <ZFormItem label="代理地址" :required="!proxy" :description="connectionDescription">
+        <ZInput
           v-model="proxyUrl"
-          :type="showSecret ? 'text' : 'password'"
+          show-password
           autocomplete="new-password"
           :disabled="busy"
           aria-label="代理地址"
           placeholder="请输入代理地址"
-        >
-          <template #suffix>
-            <BaseIconButton :label="showSecret ? '隐藏代理地址' : '显示代理地址'" :disabled="busy" @click="showSecret = !showSecret">
-              <EyeOff v-if="showSecret" class="size-4" />
-              <Eye v-else class="size-4" />
-            </BaseIconButton>
-          </template>
-        </BaseInput>
-      </BaseFormItem>
+        />
+      </ZFormItem>
       <div class="flex items-center justify-between gap-3">
-        <BaseSwitch v-model="customLocation" label="自定义时区位置" show-label :disabled="busy" />
-        <BaseIconButton
-          size="md"
-          :label="detectingLocation ? '正在解析出口位置' : '解析出口位置并填入表单'"
+        <ZSwitch v-model="customLocation" label="自定义时区位置" :disabled="busy" />
+        <ZIconButton
+          size="default"
+          :aria-label="detectingLocation ? '正在解析出口位置' : '解析出口位置并填入表单'"
           :title="detectingLocation ? '正在解析出口位置' : '解析出口位置并填入表单'"
           :aria-busy="detectingLocation"
           :disabled="busy"
@@ -81,7 +68,7 @@ watch(open, (value) => {
             <span v-if="detectingLocation" class="location-ripple location-ripple-delayed" aria-hidden="true" />
             <LocateFixed class="relative z-10 size-4" aria-hidden="true" />
           </span>
-        </BaseIconButton>
+        </ZIconButton>
       </div>
       <p v-if="testResult?.success === false" class="m-0 text-cp-sm text-cp-error-text" role="alert">
         连接测试失败：{{ testResult.message }}
@@ -93,25 +80,25 @@ watch(open, (value) => {
       <p v-if="proxy?.accountCount && proxyUrl.trim()" class="m-0 text-cp-sm text-cp-warning-text">
         将更新 {{ proxy.accountCount }} 个关联账号的出口
       </p>
-    </BaseForm>
+    </ZForm>
     <template #footer>
-      <BaseButton variant="secondary" :disabled="busy" @click="open = false">
+      <ZButton :disabled="busy" @click="open = false">
         取消
-      </BaseButton>
-      <BaseButton variant="secondary" :loading="testingConnection" :disabled="saving || detectingLocation" @click="emit('test')">
+      </ZButton>
+      <ZButton :loading="testingConnection" :disabled="saving || detectingLocation" @click="emit('test')">
         <template #icon>
           <Wifi class="size-4" />
         </template>
         测试连接
-      </BaseButton>
-      <BaseButton variant="primary" :loading="saving" :disabled="testingConnection || detectingLocation" @click="emit('save')">
+      </ZButton>
+      <ZButton type="primary" :loading="saving" :disabled="testingConnection || detectingLocation" @click="emit('save')">
         <template #icon>
           <Save class="size-4" />
         </template>
         保存代理
-      </BaseButton>
+      </ZButton>
     </template>
-  </BaseModal>
+  </ZDialog>
 </template>
 
 <style scoped>

@@ -2,7 +2,7 @@
 import type { EChartsOption } from 'echarts'
 import type { UsageRecordDetail } from '@/api'
 
-import { BaseButton, BaseModal, BaseTable, defineTableColumns } from '@codex-proxy/ui'
+import { defineTableColumns, ZButton, ZDialog, ZTable } from '@codex-proxy/ui'
 import { computed } from 'vue'
 import BaseChart from '@/components/charts/BaseChart.vue'
 import { chartTooltipStyle } from '@/components/charts/tooltip'
@@ -275,12 +275,12 @@ const tokenDonutOption = computed<EChartsOption>(() => {
 </script>
 
 <template>
-  <BaseModal
+  <ZDialog
     v-model="open"
     title="使用记录详情"
     description="单次请求的完整链路信息"
-    tone="info"
-    size="xl"
+    type="info"
+    width="64rem"
   >
     <div v-if="record" class="grid min-w-0 gap-3">
       <section :class="panelClass">
@@ -420,11 +420,11 @@ const tokenDonutOption = computed<EChartsOption>(() => {
         <h3 :class="panelTitleClass">
           尝试链路
         </h3>
-        <BaseTable
+        <ZTable
           class="attempt-table mt-2.5 h-auto! min-w-0 font-mono tabular-nums"
           :columns="attemptColumns"
-          :rows="attemptRows"
-          density="compact"
+          :data="attemptRows"
+          size="small"
           row-key="id"
         >
           <template #outcome="{ row }">
@@ -450,7 +450,7 @@ const tokenDonutOption = computed<EChartsOption>(() => {
               {{ formatDuration(row.latencyMs) }}
             </span>
           </template>
-        </BaseTable>
+        </ZTable>
       </section>
 
       <section
@@ -478,11 +478,11 @@ const tokenDonutOption = computed<EChartsOption>(() => {
     <RequestDiagnosticsPanel v-if="record" :request-id="record.requestId" :active="open" />
 
     <template #footer>
-      <BaseButton variant="primary" @click="open = false">
+      <ZButton type="primary" @click="open = false">
         关闭
-      </BaseButton>
+      </ZButton>
     </template>
-  </BaseModal>
+  </ZDialog>
 </template>
 
 <style scoped>

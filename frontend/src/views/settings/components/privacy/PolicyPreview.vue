@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { CodexPrivacyPolicy, PrivacySample } from '@/api/modules/settings/privacy'
-import { BaseButton, BaseFormItem, BaseModal, BaseTextarea } from '@codex-proxy/ui'
+import { ZButton, ZDialog, ZFormItem, ZTextarea } from '@codex-proxy/ui'
 import { computed, shallowRef, watch } from 'vue'
 import { usePrivacyPreview } from '../../composables/usePrivacyPreview'
 import { exampleRequest } from './presets'
@@ -29,12 +29,12 @@ async function test() {
 </script>
 
 <template>
-  <BaseModal v-model="open" title="测试规则" description="按草稿顺序执行已启用的规则，样本仅用于本次测试" size="lg">
+  <ZDialog v-model="open" title="测试规则" description="按草稿顺序执行已启用的规则，样本仅用于本次测试" width="48rem">
     <div class="grid gap-3">
       <div class="grid min-w-0 gap-3 sm:grid-cols-2">
-        <BaseFormItem label="请求样本">
-          <BaseTextarea v-model="sample" aria-label="请求样本" placeholder="粘贴包含 body、headers、turnMetadata 的请求 JSON" resize="none" maxlength="262144" size="sm" class="font-mono [&_textarea]:block [&_textarea]:h-64" spellcheck="false" />
-        </BaseFormItem>
+        <ZFormItem label="请求样本">
+          <ZTextarea v-model="sample" aria-label="请求样本" placeholder="粘贴包含 body、headers、turnMetadata 的请求 JSON" resize="none" maxlength="262144" size="small" class="font-mono [&_textarea]:block [&_textarea]:h-64" spellcheck="false" />
+        </ZFormItem>
         <div class="grid min-w-0 content-start gap-2">
           <span class="flex min-h-4 items-center text-cp leading-none font-medium text-cp-text-secondary">最终结果</span><pre class="cp-scrollbar m-0 h-64 overflow-auto rounded-cp bg-cp-fill-quaternary p-3 font-mono text-cp-xs break-all whitespace-pre-wrap">{{ output || '点击测试查看结果' }}</pre>
         </div>
@@ -50,11 +50,11 @@ async function test() {
       </p>
     </div>
     <template #footer>
-      <BaseButton size="sm" variant="secondary" @click="open = false">
+      <ZButton size="small" @click="open = false">
         关闭
-      </BaseButton><BaseButton size="sm" variant="primary" :loading="loading" @click="test">
+      </ZButton><ZButton size="small" type="primary" :loading="loading" @click="test">
         测试规则
-      </BaseButton>
+      </ZButton>
     </template>
-  </BaseModal>
+  </ZDialog>
 </template>

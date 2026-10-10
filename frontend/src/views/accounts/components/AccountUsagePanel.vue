@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Account } from '@/api'
 
-import { BaseTable, defineTableColumns } from '@codex-proxy/ui'
+import { defineTableColumns, ZTable } from '@codex-proxy/ui'
 import { Sigma } from '@lucide/vue'
 import { computed } from 'vue'
 import { modelSuccessRateTextClass } from '../constants'
@@ -100,11 +100,11 @@ const modelUsageColumns = defineTableColumns<AccountModelUsage>([
       </div>
 
       <div class="h-56 min-w-0 xl:h-auto xl:min-h-0 xl:flex-1 xl:basis-0">
-        <BaseTable
+        <ZTable
           :columns="modelUsageColumns"
-          :rows="account.usage.models"
+          :data="account.usage.models"
           row-key="model"
-          density="compact"
+          size="small"
           empty-text="暂无模型用量"
         >
           <template #successRateDisplay="{ row }">
@@ -112,7 +112,7 @@ const modelUsageColumns = defineTableColumns<AccountModelUsage>([
               {{ row.successRateDisplay }}
             </span>
           </template>
-        </BaseTable>
+        </ZTable>
       </div>
     </div>
   </section>

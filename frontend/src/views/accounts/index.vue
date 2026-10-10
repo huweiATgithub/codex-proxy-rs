@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BaseCard, BaseCheckbox, BaseConfirmModal, BasePageHeader, BaseTable, BaseTableColumnSettings, BaseTablePagination, useTableColumns } from '@codex-proxy/ui'
+import { useTableColumns, ZCard, ZCheckbox, ZConfirmDialog, ZPageHeader, ZPagination, ZTable, ZTableColumnSettings } from '@codex-proxy/ui'
 
 import { ChevronDown } from '@lucide/vue'
 import { ref } from 'vue'
@@ -195,7 +195,7 @@ const {
 
 <template>
   <div class="flex min-h-0 w-full flex-col xl:h-full xl:overflow-hidden">
-    <BasePageHeader
+    <ZPageHeader
       class="h-17"
       title="账号管理"
       description="维护账号池，查看可用性、配额与使用状态"
@@ -203,7 +203,7 @@ const {
 
     <AccountOverviewCards :summary="accountSummary" />
 
-    <BaseCard
+    <ZCard
       class="mt-4 flex flex-col xl:h-[calc(100dvh-250px)] xl:min-h-125"
     >
       <template #header>
@@ -227,7 +227,7 @@ const {
           @edit-selected="openBatchEdit"
         >
           <template #actions>
-            <BaseTableColumnSettings
+            <ZTableColumnSettings
               :options="columnOptions"
               @change="setColumnVisible"
               @reorder="setColumnOrder"
@@ -239,10 +239,10 @@ const {
 
       <template #body>
         <div class="flex min-h-0 flex-col xl:h-full">
-          <BaseTable
+          <ZTable
             class="h-100! min-h-100 flex-none [--cp-table-row-height:72px] xl:h-auto! xl:min-h-0 xl:flex-1"
             :columns="visibleColumns"
-            :rows="accounts"
+            :data="accounts"
             :loading="loading"
             :selected-row-keys="selectedRowKeys"
             :expanded-row-keys="expandedRowKeys"
@@ -265,18 +265,18 @@ const {
             </template>
 
             <template #header-selection>
-              <BaseCheckbox
+              <ZCheckbox
                 :model-value="allSelected"
                 :indeterminate="indeterminate"
-                label="选择当前页账号"
+                aria-label="选择当前页账号"
                 @update:model-value="toggleAll"
               />
             </template>
 
             <template #selection="{ row }">
-              <BaseCheckbox
+              <ZCheckbox
                 :model-value="selectedIds.has(row.id)"
-                label="选择账号"
+                aria-label="选择账号"
                 @update:model-value="toggleSelection(row.id)"
               />
             </template>
@@ -357,16 +357,16 @@ const {
                 <AccountUsagePanel :account="row" />
               </div>
             </template>
-          </BaseTable>
-          <BaseTablePagination
-            :pagination="accountPagination"
-            :loading="loading"
-            @page-change="handlePageChange"
-            @page-size-change="handlePageSizeChange"
+          </ZTable>
+          <ZPagination
+            v-bind="accountPagination"
+            :disabled="loading"
+            @current-change="handlePageChange"
+            @size-change="handlePageSizeChange"
           />
         </div>
       </template>
-    </BaseCard>
+    </ZCard>
 
     <AccountConnectionTestModal
       v-model="showConnectionTestModal"
@@ -458,7 +458,7 @@ const {
       @save="saveBatchEdit"
     />
 
-    <BaseConfirmModal
+    <ZConfirmDialog
       v-model="showDeleteModal"
       title="确认删除"
       description="删除后该账号将不再参与调度，此操作不可撤销"
@@ -470,9 +470,9 @@ const {
       <p class="m-0">
         确定要删除选中的 {{ deleteCount }} 个账号吗？此操作不可撤销
       </p>
-    </BaseConfirmModal>
+    </ZConfirmDialog>
 
-    <BaseConfirmModal
+    <ZConfirmDialog
       v-model="showSingleDeleteModal"
       title="删除账号"
       description="删除后该账号将不再参与调度，此操作不可撤销"
@@ -491,6 +491,6 @@ const {
         }}
         吗？
       </p>
-    </BaseConfirmModal>
+    </ZConfirmDialog>
   </div>
 </template>
