@@ -1,51 +1,32 @@
 import type { Ref } from 'vue'
-import type { AccountCapabilities, AccountPersonalInfoResponse } from '@/api'
-import { computed, shallowRef, watch } from 'vue'
+import type { Account } from '@/api'
+import { computed, watch } from 'vue'
 
-import { getAccountPersonalInfo } from '@/api'
-import { useRequestState } from '@/composables/useRequestState'
+import { accountInsightKey, useAccountInsights } from './useAccountInsights'
 
-export function useAccountPersonalInfo({ accountId, open, capabilities }: {
-  accountId: Ref<string>
+export function useAccountPersonalInfo({ account, open }: {
+  account: Ref<Account>
   open: Ref<boolean>
-  capabilities: Ref<AccountCapabilities>
 }) {
-  const info = shallowRef<AccountPersonalInfoResponse | null>(null)
-  const request = useRequestState()
-  const { loading } = request
-  const profile = computed(() => capabilities.value.profile ? info.value?.profile ?? null : null)
-  const subscription = computed(() => capabilities.value.subscription ? info.value?.subscription ?? null : null)
-  const error = computed(() => request.error.value || (capabilities.value.profile ? info.value?.profileError : '') || '')
+  const insights = useAccountInsights()
+  const key = computed(() => accountInsightKey(account.value))
+  const state = computed(() => insights.personalInfo(account.value))
+  const info = computed(() => state.value.info)
+  const loading = computed(() => state.value.loading)
+  const profile = computed(() => account.value.capabilities.profile ? info.value?.profile ?? null : null)
+  const subscription = computed(() => account.value.capabilities.subscription ? info.value?.subscription ?? null : null)
+  const error = computed(() => state.value.error || (account.value.capabilities.profile ? info.value?.profileError : '') || '')
 
-  async function load() {
-    const targetAccountId = accountId.value
-    if (!open.value || !targetAccountId || loading.value)
-      return
-
-    const version = request.start()
-    try {
-      const result = await getAccountPersonalInfo({ accountId: targetAccountId }, { signal: request.signal })
-      if (!request.isCurrent(version))
-        return
-      // 单项失败仍更新其他信息；仅在当前打开周期保留上次可用的统计。
-      info.value = { ...result, profile: result.profile ?? info.value?.profile ?? null }
-    }
-    catch (cause) {
-      request.fail(version, cause)
-    }
-    finally {
-      request.finish(version)
-    }
+  function load() {
+    if (!open.value)
+      return Promise.resolve(false)
+    return insights.loadPersonalInfo(account.value)
   }
 
-  // 打开或切换账号只请求一次；关闭取消等待，刷新按钮复用同一入口。
-  watch([open, accountId, () => capabilities.value.profile, () => capabilities.value.subscription], ([isOpen]) => {
-    request.invalidate({ resetLoading: isOpen })
-    if (!isOpen)
-      return
-    info.value = null
-    request.error.value = ''
-    void load()
+  // 弹窗复用已读结果，首次查看或手动刷新才查询，关闭不清除共享快照
+  watch([open, key, () => account.value.capabilities.profile, () => account.value.capabilities.subscription], ([isOpen]) => {
+    if (isOpen && !info.value)
+      void load()
   }, { immediate: true })
 
   return {

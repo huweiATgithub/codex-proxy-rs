@@ -1,96 +1,60 @@
 import type { Ref } from 'vue'
-import type { Account, AccountQuotaForecastResponse } from '@/api'
+import type { Account } from '@/api'
 import { toast } from '@codex-proxy/ui'
-import { onScopeDispose, shallowRef, watch } from 'vue'
-import { getAccountQuotaForecast, refreshAccountQuota } from '@/api'
+import { computed, nextTick, onScopeDispose, shallowRef, watch } from 'vue'
+import { refreshAccountQuota } from '@/api'
+import { useAccountInsights } from './useAccountInsights'
 
 export function useAccountQuotaForecast(
-  accountId: Ref<string>,
+  account: Ref<Account>,
   open: Ref<boolean>,
-  onAccountUpdated: (account: Account) => void,
+  onAccountUpdated?: (account: Account) => void,
 ) {
-  const report = shallowRef<AccountQuotaForecastResponse | null>(null)
-  const loading = shallowRef(false)
+  const insights = useAccountInsights()
+  const state = computed(() => insights.forecast(account.value))
+  const report = computed(() => state.value.report)
+  const loading = computed(() => state.value.loading)
+  const error = computed(() => state.value.error)
   const refreshing = shallowRef(false)
-  const error = shallowRef(false)
-  let requestVersion = 0
-  let controller: AbortController | undefined
   let disposed = false
 
-  function cancelLoad(resetLoading = true) {
-    requestVersion += 1
-    controller?.abort()
-    controller = undefined
-    if (resetLoading)
-      loading.value = false
-  }
-
-  async function load() {
-    if (!open.value || !accountId.value || disposed)
-      return false
-    cancelLoad()
-    const version = requestVersion
-    controller = new AbortController()
-    loading.value = true
-    error.value = false
-    try {
-      const result = await getAccountQuotaForecast({ accountId: accountId.value }, { signal: controller.signal })
-      if (version === requestVersion) {
-        report.value = result
-        return true
-      }
-    }
-    catch {
-      if (version === requestVersion) {
-        error.value = true
-      }
-    }
-    finally {
-      if (version === requestVersion)
-        loading.value = false
-    }
-    return false
+  function load() {
+    if (!open.value || disposed || account.value.authenticationKind === 'api_key')
+      return Promise.resolve(false)
+    return insights.loadForecast(account.value)
   }
 
   async function refresh() {
     if (refreshing.value || !open.value)
       return
-    const targetAccountId = accountId.value
-    cancelLoad()
+    const targetAccountId = account.value.id
     refreshing.value = true
-    error.value = false
     try {
-      // 刷新属于现有额度动作；预测查询本身始终只读。
+      // 刷新仍由用户显式触发，列表与弹窗只共享本地预测结果
       const result = await refreshAccountQuota({ accountId: targetAccountId })
       if (disposed)
         return
-      onAccountUpdated(result.account)
-      if (accountId.value === targetAccountId && await load())
+      onAccountUpdated?.(result.account)
+      await nextTick()
+      if (account.value.id === targetAccountId && await load())
         toast.success('额度已刷新')
     }
     catch {
-      if (!disposed && accountId.value === targetAccountId) {
-        if (!report.value)
-          error.value = true
-      }
+      if (!disposed && account.value.id === targetAccountId)
+        state.value.error = true
     }
     finally {
       refreshing.value = false
     }
   }
 
-  watch([open, accountId], ([isOpen]) => {
-    cancelLoad(isOpen)
-    if (!isOpen)
-      return
-    report.value = null
-    error.value = false
-    void load()
+  watch([open, account], ([isOpen]) => {
+    if (isOpen && !report.value)
+      void load()
   }, { immediate: true })
 
   onScopeDispose(() => {
     disposed = true
-    cancelLoad()
   })
 
   return { report, loading, refreshing, error, load, refresh }

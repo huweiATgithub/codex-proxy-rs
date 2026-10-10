@@ -1,7 +1,22 @@
 import type { AccountQuotaWindowEntry } from '../../constants'
-import type { Account, AccountQuotaWindow } from '@/api'
+import type { Account, AccountQuotaWindow, AccountResetCredit } from '@/api'
 
 type AccountModelUsage = Account['usage']['models'][number]
+
+export function soonestResetCredit(credits: readonly AccountResetCredit[]) {
+  let soonest: AccountResetCredit | undefined
+  let soonestTimestamp = Number.POSITIVE_INFINITY
+  for (const credit of credits) {
+    if (credit.status !== 'available' || !credit.expiresAt)
+      continue
+    const timestamp = Date.parse(credit.expiresAt)
+    if (Number.isFinite(timestamp) && timestamp < soonestTimestamp) {
+      soonest = credit
+      soonestTimestamp = timestamp
+    }
+  }
+  return soonest
+}
 
 /**
  * 根据账号最近一次模型请求选择对应额度组。
