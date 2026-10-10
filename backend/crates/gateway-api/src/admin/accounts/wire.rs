@@ -266,6 +266,7 @@ pub struct AccountSummaryView {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountView {
+    pub insights: AccountInsightsData,
     pub capabilities: AccountCapabilitiesView,
     pub outbound_proxy_endpoint: Option<String>,
     pub id: String,
@@ -304,6 +305,45 @@ pub struct AccountView {
     pub updated_at_display: String,
     pub quota: AccountQuotaView,
     pub usage: AccountUsageView,
+}
+
+/// 最近保存的辅助信息，普通账号查询只读取本地快照
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountInsightsData {
+    pub subscription: Option<AccountInsightSnapshotData<AccountSubscriptionData>>,
+    pub reset_credits: Option<AccountInsightSnapshotData<AccountResetCreditsData>>,
+}
+
+/// 保留空值观测的时间，客户端不会把未查询或已失效的数据当作零库存
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountInsightSnapshotData<T> {
+    pub observed_at: String,
+    pub value: Option<T>,
+}
+
+impl From<(AccountInsights, crate::time::TimePresenter)> for AccountInsightsData {
+    fn from((insights, time): (AccountInsights, crate::time::TimePresenter)) -> Self {
+        Self {
+            subscription: insights
+                .subscription
+                .map(|snapshot| AccountInsightSnapshotData {
+                    observed_at: snapshot.observed_at.to_rfc3339(),
+                    value: snapshot
+                        .value
+                        .map(|value| AccountSubscriptionData::from((value, time))),
+                }),
+            reset_credits: insights
+                .reset_credits
+                .map(|snapshot| AccountInsightSnapshotData {
+                    observed_at: snapshot.observed_at.to_rfc3339(),
+                    value: snapshot
+                        .value
+                        .map(|value| AccountResetCreditsData::from((value, time))),
+                }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -771,6 +811,7 @@ pub struct AccountPersonalInfoData {
     pub profile: Option<AccountProfileStatisticsData>,
     pub profile_error: Option<String>,
     pub subscription: Option<AccountSubscriptionData>,
+    pub subscription_observed_at: Option<String>,
 }
 
 impl From<(AccountPersonalInfo, crate::time::TimePresenter)> for AccountPersonalInfoData {
@@ -785,6 +826,9 @@ impl From<(AccountPersonalInfo, crate::time::TimePresenter)> for AccountPersonal
         Self {
             profile,
             profile_error,
+            subscription_observed_at: info
+                .subscription_observed_at
+                .map(|value| value.to_rfc3339()),
             subscription: info
                 .subscription
                 .map(|value| AccountSubscriptionData::from((value, time))),
@@ -956,6 +1000,7 @@ fn profile_invocation_view(invocation: ProviderProfileInvocation) -> AccountProf
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountResetCreditsData {
+    pub observed_at: String,
     pub available_count: u64,
     pub credits: Vec<AccountResetCreditView>,
 }
@@ -996,6 +1041,7 @@ impl From<(ProviderResetCredit, crate::time::TimePresenter)> for AccountResetCre
 impl From<(ProviderResetCredits, crate::time::TimePresenter)> for AccountResetCreditsData {
     fn from((credits, time): (ProviderResetCredits, crate::time::TimePresenter)) -> Self {
         Self {
+            observed_at: credits.observed_at.to_rfc3339(),
             available_count: credits.available_count,
             credits: credits
                 .credits

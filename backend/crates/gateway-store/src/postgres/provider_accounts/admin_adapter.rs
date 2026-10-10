@@ -313,6 +313,22 @@ impl PgAdminAccountStore {
 
 #[async_trait]
 impl AccountStore for PgAdminAccountStore {
+    async fn load_account_insights(
+        &self,
+        accounts: &[AccountRecord],
+    ) -> AdminStoreResult<BTreeMap<String, AccountInsights>> {
+        super::insights::load(&self.pool, accounts).await
+    }
+
+    async fn observe_account_insight(
+        &self,
+        account: &AccountRecord,
+        observed_at: DateTime<Utc>,
+        observation: &AccountInsightObservation,
+    ) -> AdminStoreResult<bool> {
+        super::insights::observe(&self.pool, account, observed_at, observation).await
+    }
+
     async fn list_plugin_accounts(
         &self,
         query: PluginAccountListQuery,

@@ -35,6 +35,7 @@ use gateway_admin::{
         },
         observability::TimeRange,
         provider_credentials::{
+            AccountInsightObservation, AccountInsightSnapshot, AccountInsights,
             AuthorizationCommit, AuthorizationCommitGuard, AuthorizationCredentialCommit,
             AuthorizationMutationTarget, AuthorizationStarted, CompleteAuthorization,
             ConsumeProviderResetCredit, CredentialCommitGuard, CredentialDetails,
@@ -46,8 +47,8 @@ use gateway_admin::{
             ProviderDocument, ProviderExport, ProviderExportCredentialInput, ProviderModels,
             ProviderProfileActivityInsights, ProviderProfileStatistics,
             ProviderProfileStatisticsSummary, ProviderQuota, ProviderQuotaRequest,
-            ProviderQuotaWindow, ProviderResetCreditResult, ProviderSubscription,
-            QuotaLocalUsageAttribution,
+            ProviderQuotaWindow, ProviderResetCreditResult, ProviderResetCredits,
+            ProviderSubscription, QuotaLocalUsageAttribution,
         },
         quota_forecast_sampling::{QuotaForecastHistory, QuotaForecastUsage},
         settings::{
@@ -89,6 +90,7 @@ pub(super) struct FakeProviderAdmin {
     reset_credit_commands: Mutex<Vec<ConsumeProviderResetCredit>>,
     profile_result: Mutex<Result<ProviderProfileStatistics, ProviderAdminErrorKind>>,
     subscription_result: Mutex<Result<Option<ProviderSubscription>, ProviderAdminErrorKind>>,
+    reset_credits_result: Mutex<Result<ProviderResetCredits, ProviderAdminErrorKind>>,
     personal_info_barrier: Mutex<Option<Arc<tokio::sync::Barrier>>>,
 }
 
@@ -114,6 +116,11 @@ impl FakeProviderAdmin {
             reset_credit_commands: Mutex::new(Vec::new()),
             profile_result: Mutex::new(Ok(empty_profile_statistics())),
             subscription_result: Mutex::new(Ok(None)),
+            reset_credits_result: Mutex::new(Ok(ProviderResetCredits {
+                observed_at: Utc::now(),
+                available_count: 0,
+                credits: Vec::new(),
+            })),
             personal_info_barrier: Mutex::new(None),
         })
     }
@@ -498,6 +505,18 @@ impl ProviderAdmin for FakeProviderAdmin {
         Ok(self.quota.lock().expect("provider quota").clone())
     }
 
+    async fn reset_credits(
+        &self,
+        _: &ProviderAccountId,
+    ) -> Result<ProviderResetCredits, ProviderAdminError> {
+        self.record("provider.reset_credits");
+        self.reset_credits_result
+            .lock()
+            .unwrap()
+            .clone()
+            .map_err(ProviderAdminError::new)
+    }
+
     async fn consume_reset_credit(
         &self,
         command: ConsumeProviderResetCredit,
@@ -560,7 +579,17 @@ impl ProviderAdmin for FakeProviderAdmin {
     }
 }
 
+type SavedInsightObservations = BTreeMap<
+    (String, &'static str),
+    (
+        AccountRecord,
+        chrono::DateTime<Utc>,
+        AccountInsightObservation,
+    ),
+>;
+
 pub(super) struct FakeAccountStore {
+    insights: Mutex<SavedInsightObservations>,
     events: EventLog,
     accounts: Mutex<Vec<AccountRecord>>,
     account_after_probe: Mutex<Option<AccountRecord>>,
@@ -587,6 +616,7 @@ impl FakeAccountStore {
 
     pub(super) fn with_account(account: AccountRecord, events: EventLog) -> Arc<Self> {
         Arc::new(Self {
+            insights: Mutex::new(BTreeMap::new()),
             events,
             accounts: Mutex::new(vec![account]),
             account_after_probe: Mutex::new(None),
@@ -693,6 +723,67 @@ impl FakeAccountStore {
 
 #[async_trait]
 impl AccountStore for FakeAccountStore {
+    async fn load_account_insights(
+        &self,
+        accounts: &[AccountRecord],
+    ) -> AdminStoreResult<BTreeMap<String, AccountInsights>> {
+        let mut result = BTreeMap::<String, AccountInsights>::new();
+        for ((id, _), (stored, observed_at, observation)) in self.insights.lock().unwrap().iter() {
+            if !accounts.iter().any(|account| {
+                account.id == *id
+                    && account.provider_kind == stored.provider_kind
+                    && account.authentication_kind == stored.authentication_kind
+                    && account.upstream_user_id == stored.upstream_user_id
+                    && account.upstream_account_id == stored.upstream_account_id
+            }) {
+                continue;
+            }
+            let target = result.entry(id.clone()).or_default();
+            match observation {
+                AccountInsightObservation::Subscription(value) => {
+                    target.subscription = Some(AccountInsightSnapshot {
+                        observed_at: *observed_at,
+                        value: value.clone(),
+                    })
+                }
+                AccountInsightObservation::ResetCredits(value) => {
+                    target.reset_credits = Some(AccountInsightSnapshot {
+                        observed_at: *observed_at,
+                        value: value.clone(),
+                    })
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    async fn observe_account_insight(
+        &self,
+        account: &AccountRecord,
+        observed_at: chrono::DateTime<Utc>,
+        observation: &AccountInsightObservation,
+    ) -> AdminStoreResult<bool> {
+        if !self.accounts.lock().unwrap().iter().any(|current| {
+            current.id == account.id && current.credential_revision == account.credential_revision
+        }) {
+            return Ok(false);
+        }
+        let kind = match observation {
+            AccountInsightObservation::Subscription(_) => "subscription",
+            AccountInsightObservation::ResetCredits(_) => "reset_credits",
+        };
+        let key = (account.id.clone(), kind);
+        let mut insights = self.insights.lock().unwrap();
+        if insights
+            .get(&key)
+            .is_some_and(|(_, previous, _)| *previous > observed_at)
+        {
+            return Ok(false);
+        }
+        insights.insert(key, (account.clone(), observed_at, observation.clone()));
+        Ok(true)
+    }
+
     async fn list_plugin_accounts(
         &self,
         _: gateway_admin::model::provider_credentials::PluginAccountListQuery,
@@ -3578,5 +3669,174 @@ async fn account_capacity_should_batch_page_ids_and_distinguish_idle_from_unavai
                 assert_eq!(page.items[0].capacity.total_slots, Some(5));
             }
         }
+    }
+}
+
+fn insights_list_query() -> AccountListQuery {
+    AccountListQuery {
+        page: 1,
+        page_size: gateway_admin::model::PageSize::new(20).unwrap(),
+        provider_kind: None,
+        group_filter: None,
+        search: None,
+        status: None,
+        sort: None,
+    }
+}
+
+#[tokio::test]
+async fn account_reads_should_restore_saved_insights_without_upstream_queries() {
+    let log = events();
+    let provider = FakeProviderAdmin::new("openai", log.clone());
+    let store = FakeAccountStore::new("openai", log.clone());
+    let subscription = personal_info_subscription();
+    *provider.subscription_result.lock().unwrap() = Ok(Some(subscription.clone()));
+    *provider.reset_credits_result.lock().unwrap() = Ok(ProviderResetCredits {
+        observed_at: Utc::now(),
+        available_count: 2,
+        credits: Vec::new(),
+    });
+    let services = accounts_service(provider.clone(), store.clone()).await;
+    let id = ProviderAccountId::new("acct_test").unwrap();
+    services.accounts().personal_info(&id).await.unwrap();
+    services
+        .accounts()
+        .reset_credits(&context("read-cards"), id.clone())
+        .await
+        .unwrap();
+    log.lock().unwrap().clear();
+
+    // 新服务实例只使用持久端口，模拟浏览器和应用状态同时重建
+    let restarted = accounts_service(provider, store).await;
+    let page = restarted
+        .accounts()
+        .list(insights_list_query())
+        .await
+        .unwrap();
+    let detail = restarted.accounts().quota(&id, false).await.unwrap();
+    for insights in [&page.items[0].insights, &detail.insights] {
+        assert_eq!(
+            insights.subscription.as_ref().unwrap().value.as_ref(),
+            Some(&subscription)
+        );
+        assert_eq!(
+            insights
+                .reset_credits
+                .as_ref()
+                .unwrap()
+                .value
+                .as_ref()
+                .unwrap()
+                .available_count,
+            2
+        );
+    }
+    assert!(!recorded(&log).iter().any(|event| matches!(
+        *event,
+        "provider.subscription" | "provider.profile_statistics" | "provider.reset_credits"
+    )));
+}
+
+#[tokio::test]
+async fn failed_refreshes_should_keep_saved_data_and_successful_empty_results_should_clear_it() {
+    let provider = FakeProviderAdmin::new("openai", events());
+    let store = FakeAccountStore::new("openai", events());
+    *provider.subscription_result.lock().unwrap() = Ok(Some(personal_info_subscription()));
+    let services = accounts_service(provider.clone(), store).await;
+    let id = ProviderAccountId::new("acct_test").unwrap();
+    services.accounts().personal_info(&id).await.unwrap();
+    services
+        .accounts()
+        .reset_credits(&context("cards"), id.clone())
+        .await
+        .unwrap();
+    let before = services
+        .accounts()
+        .quota(&id, false)
+        .await
+        .unwrap()
+        .insights;
+    *provider.subscription_result.lock().unwrap() = Err(ProviderAdminErrorKind::Unavailable);
+    *provider.reset_credits_result.lock().unwrap() = Err(ProviderAdminErrorKind::Unavailable);
+    let fallback = services.accounts().personal_info(&id).await.unwrap();
+    assert_eq!(
+        fallback.subscription,
+        before.subscription.as_ref().unwrap().value
+    );
+    assert!(
+        services
+            .accounts()
+            .reset_credits(&context("cards-fail"), id.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        services
+            .accounts()
+            .quota(&id, false)
+            .await
+            .unwrap()
+            .insights,
+        before
+    );
+
+    *provider.subscription_result.lock().unwrap() = Ok(None);
+    services.accounts().personal_info(&id).await.unwrap();
+    assert!(
+        services
+            .accounts()
+            .quota(&id, false)
+            .await
+            .unwrap()
+            .insights
+            .subscription
+            .unwrap()
+            .value
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn consuming_a_card_should_invalidate_the_saved_inventory_even_when_result_is_unknown() {
+    for failure in [None, Some(ProviderAdminErrorKind::Ambiguous)] {
+        let provider = FakeProviderAdmin::new("openai", events());
+        let services =
+            accounts_service(provider.clone(), FakeAccountStore::new("openai", events())).await;
+        let id = ProviderAccountId::new("acct_test").unwrap();
+        services
+            .accounts()
+            .reset_credits(&context("cards"), id.clone())
+            .await
+            .unwrap();
+        if let Some(kind) = failure {
+            provider.fail_next(kind);
+        }
+        let result = services
+            .accounts()
+            .consume_reset_credit(
+                &context("consume"),
+                ConsumeProviderResetCredit {
+                    account_id: id.clone(),
+                    credit_id: None,
+                    redeem_request_id: uuid::Uuid::parse_str(
+                        "8fbf302d-11df-4bd5-82e4-08e4b3df7874",
+                    )
+                    .unwrap(),
+                },
+            )
+            .await;
+        assert_eq!(result.is_err(), failure.is_some());
+        assert!(
+            services
+                .accounts()
+                .quota(&id, false)
+                .await
+                .unwrap()
+                .insights
+                .reset_credits
+                .unwrap()
+                .value
+                .is_none()
+        );
     }
 }

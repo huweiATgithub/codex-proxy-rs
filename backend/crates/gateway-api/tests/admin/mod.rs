@@ -1112,6 +1112,27 @@ impl ClientKeyVerifier for UnusedClientKeyVerifier {
 
 #[async_trait]
 impl AccountStore for UnusedStore {
+    async fn load_account_insights(
+        &self,
+        _: &[gateway_admin::model::accounts::AccountRecord],
+    ) -> AdminStoreResult<
+        std::collections::BTreeMap<
+            String,
+            gateway_admin::model::provider_credentials::AccountInsights,
+        >,
+    > {
+        Ok(Default::default())
+    }
+
+    async fn observe_account_insight(
+        &self,
+        _: &gateway_admin::model::accounts::AccountRecord,
+        _: chrono::DateTime<chrono::Utc>,
+        _: &gateway_admin::model::provider_credentials::AccountInsightObservation,
+    ) -> AdminStoreResult<bool> {
+        Err(unavailable("account insights"))
+    }
+
     async fn list_plugin_accounts(
         &self,
         _: gateway_admin::model::provider_credentials::PluginAccountListQuery,

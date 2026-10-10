@@ -17,7 +17,7 @@ use crate::model::{
         SetAccountGroupEnabled, UpdateAccountGroup,
     },
     accounts::{
-        AccountListQuery, AccountPage, AccountPageItem, AccountRuntimeSnapshot,
+        AccountListQuery, AccountPage, AccountPageItem, AccountRecord, AccountRuntimeSnapshot,
         AccountUpdateResult, AccountUsage, AccountUsageWindowQuery, AccountUsageWindowResult,
         AccountsUpdateResult, BatchUpdateAccounts, DeleteAccounts, UpdateAccount,
     },
@@ -33,9 +33,10 @@ use crate::model::{
         UsageCalculatedBillingFact, UsageDetail, UsageFilter, UsageOverview, UsagePage, UsageQuery,
     },
     provider_credentials::{
-        AuthorizationCommit, CredentialDetails, CredentialImportCommit, CredentialImportResult,
-        CredentialMutationResult, CredentialRotationCommit, PluginAccountListQuery,
-        PluginAccountPage, ProviderExportCredentialInput,
+        AccountInsightObservation, AccountInsights, AuthorizationCommit, CredentialDetails,
+        CredentialImportCommit, CredentialImportResult, CredentialMutationResult,
+        CredentialRotationCommit, PluginAccountListQuery, PluginAccountPage,
+        ProviderExportCredentialInput,
     },
     quota_forecast_sampling::QuotaForecastHistory,
     settings::{AdminApiKey, AdminApiKeyMutation, ReplaceRuntimeSettings, RuntimeSettings},
@@ -110,6 +111,20 @@ pub type AdminStoreResult<T> = Result<T, AdminStoreError>;
 /// 账号目录与公共账号写操作
 #[async_trait]
 pub trait AccountStore: Send + Sync {
+    /// 批量读取与传入账号身份一致的辅助信息，不访问 Provider
+    async fn load_account_insights(
+        &self,
+        accounts: &[AccountRecord],
+    ) -> AdminStoreResult<BTreeMap<String, AccountInsights>>;
+
+    /// 仅提交凭据版本仍匹配且不早于已有观测的结果，不推进配置 revision
+    async fn observe_account_insight(
+        &self,
+        account: &AccountRecord,
+        observed_at: DateTime<Utc>,
+        observation: &AccountInsightObservation,
+    ) -> AdminStoreResult<bool>;
+
     /// 插件回调按授权 Provider/账号在数据库过滤后做稳定 cursor 分页
     async fn list_plugin_accounts(
         &self,

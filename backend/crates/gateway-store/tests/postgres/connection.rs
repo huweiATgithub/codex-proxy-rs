@@ -259,6 +259,7 @@ async fn connect_and_migrate_should_apply_all_migrations_once_and_reopen_cleanly
             "plugin_state_records",
             "plugin_update_sources",
             "plugin_version_configurations",
+            "provider_account_insights",
             "provider_accounts",
             "runtime_settings",
         ]

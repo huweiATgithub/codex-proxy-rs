@@ -25,11 +25,12 @@ use crate::{
         },
         observability::TimeRange,
         provider_credentials::{
-            AccountDirectoryItem, AccountDirectoryPage, AccountExportBundle, AccountPersonalInfo,
-            AccountRefreshResult, AccountUsagePeriod, ConsumeProviderResetCredit,
-            PrepareCredentialRefresh, ProviderModelCatalogDocument, ProviderModels,
-            ProviderProfileAvatar, ProviderQuota, ProviderQuotaRequest, ProviderQuotaWindow,
-            ProviderResetCreditResult, ProviderResetCredits, QuotaLocalUsageAttribution,
+            AccountDirectoryItem, AccountDirectoryPage, AccountExportBundle,
+            AccountInsightObservation, AccountPersonalInfo, AccountRefreshResult,
+            AccountUsagePeriod, ConsumeProviderResetCredit, PrepareCredentialRefresh,
+            ProviderModelCatalogDocument, ProviderModels, ProviderProfileAvatar, ProviderQuota,
+            ProviderQuotaRequest, ProviderQuotaWindow, ProviderResetCreditResult,
+            ProviderResetCredits, QuotaLocalUsageAttribution,
         },
         quota_forecast::{
             AccountQuotaForecastReport, account_quota_forecasts, quota_forecast_source_window,
@@ -362,7 +363,15 @@ impl DefaultAccountsService {
                     .usage_window()
                     .and_then(|(window, _)| window.local_usage.clone())
             });
+        let insights = self
+            .accounts
+            .load_account_insights(std::slice::from_ref(&stored.account))
+            .await
+            .map_err(|error| map_store_error(error, "account insights"))?
+            .remove(&stored.account.id)
+            .unwrap_or_default();
         Ok(AccountDirectoryItem {
+            insights,
             capacity: stored.capacity,
             capabilities: provider
                 .account_capabilities(account_id, &stored.account.authentication_kind),
@@ -466,6 +475,16 @@ impl AccountsService for DefaultAccountsService {
         self.attach_quota_local_usage(&page.items, &mut quotas)
             .await?;
         let mut api_key_usage = self.load_api_key_usage(&page.items).await?;
+        let insight_accounts = page
+            .items
+            .iter()
+            .map(|item| item.account.clone())
+            .collect::<Vec<_>>();
+        let mut insights = self
+            .accounts
+            .load_account_insights(&insight_accounts)
+            .await
+            .map_err(|error| map_store_error(error, "account insights"))?;
         let items = page
             .items
             .into_iter()
@@ -485,6 +504,7 @@ impl AccountsService for DefaultAccountsService {
                         .and_then(|(window, _)| window.local_usage.clone())
                 });
                 Ok(AccountDirectoryItem {
+                    insights: insights.remove(&item.account.id).unwrap_or_default(),
                     capacity: crate::model::accounts::AccountCapacity {
                         used_slots: in_flight
                             .as_ref()
@@ -853,6 +873,7 @@ impl AccountsService for DefaultAccountsService {
         account_id: &ProviderAccountId,
     ) -> Result<AccountPersonalInfo, AdminError> {
         let (initial, provider) = self.provider_for_account(account_id).await?;
+        let observed_at = Utc::now();
         // 两项读取相互独立；不因其中一项失败而取消另一项，也不触发凭据或额度刷新
         let (profile, subscription) = futures::join!(
             provider.profile_statistics(account_id),
@@ -860,11 +881,6 @@ impl AccountsService for DefaultAccountsService {
         );
         let profile =
             profile.map_err(|error| map_provider_error(error, "provider profile statistics"));
-        let subscription = subscription
-            .map_err(|error| map_provider_error(error, "provider subscription"))
-            .ok()
-            .flatten();
-
         // 汇聚等待期间发生重新授权、换绑或删除时，不返回混合身份的数据
         let current = self.load_account(account_id).await?;
         if current.account.provider_kind != initial.account.provider_kind
@@ -874,9 +890,37 @@ impl AccountsService for DefaultAccountsService {
         {
             return Err(AdminError::conflict("账号身份已变化，请刷新信息后重试"));
         }
+        let (subscription, subscription_observed_at) = match subscription {
+            Ok(subscription) => {
+                if !self
+                    .accounts
+                    .observe_account_insight(
+                        &initial.account,
+                        observed_at,
+                        &AccountInsightObservation::Subscription(subscription.clone()),
+                    )
+                    .await
+                    .map_err(|error| map_store_error(error, "subscription observation"))?
+                {
+                    return Err(AdminError::conflict("账号或订阅信息已变化，请重新查询"));
+                }
+                (subscription, Some(observed_at))
+            }
+            Err(_) => self
+                .accounts
+                .load_account_insights(std::slice::from_ref(&current.account))
+                .await
+                .map_err(|error| map_store_error(error, "account insights"))?
+                .remove(&current.account.id)
+                .and_then(|insights| insights.subscription)
+                .map_or((None, None), |snapshot| {
+                    (snapshot.value, Some(snapshot.observed_at))
+                }),
+        };
         Ok(AccountPersonalInfo {
             profile,
             subscription,
+            subscription_observed_at,
         })
     }
 
@@ -896,22 +940,40 @@ impl AccountsService for DefaultAccountsService {
         context: &MutationContext,
         account_id: ProviderAccountId,
     ) -> Result<ProviderResetCredits, AdminError> {
-        let (_, provider) = self.provider_for_account(&account_id).await?;
-        match provider.reset_credits(&account_id).await {
-            Ok(credits) => Ok(credits),
+        let lock = self.reset_credit_lock(&account_id).await;
+        let _guard = lock.lock().await;
+        let (mut stored, provider) = self.provider_for_account(&account_id).await?;
+        let observed_at = Utc::now();
+        let mut credits = match provider.reset_credits(&account_id).await {
+            Ok(credits) => credits,
             Err(error)
                 if error.kind()
                     == crate::ports::provider::ProviderAdminErrorKind::CredentialRefreshRequired =>
             {
                 self.refresh(context, account_id.clone()).await?;
-                let (_, provider) = self.provider_for_account(&account_id).await?;
+                let (current, provider) = self.provider_for_account(&account_id).await?;
+                stored = current;
                 provider
                     .reset_credits(&account_id)
                     .await
-                    .map_err(map_reset_credits_error_after_refresh)
+                    .map_err(map_reset_credits_error_after_refresh)?
             }
-            Err(error) => Err(map_provider_error(error, "provider reset credits")),
+            Err(error) => return Err(map_provider_error(error, "provider reset credits")),
+        };
+        credits.observed_at = observed_at;
+        if !self
+            .accounts
+            .observe_account_insight(
+                &stored.account,
+                observed_at,
+                &AccountInsightObservation::ResetCredits(Some(credits.clone())),
+            )
+            .await
+            .map_err(|error| map_store_error(error, "reset-credit observation"))?
+        {
+            return Err(AdminError::conflict("账号或重置卡状态已变化，请重新查询"));
         }
+        Ok(credits)
     }
 
     async fn consume_reset_credit(
@@ -924,7 +986,20 @@ impl AccountsService for DefaultAccountsService {
         // 之间插入另一笔不可逆消费
         let lock = self.reset_credit_lock(&account_id).await;
         let _guard = lock.lock().await;
-        let (_, provider) = self.provider_for_account(&account_id).await?;
+        let (stored, provider) = self.provider_for_account(&account_id).await?;
+        // 发送前清除可消费快照，取消等待或结果未知也不能留下旧库存
+        if !self
+            .accounts
+            .observe_account_insight(
+                &stored.account,
+                Utc::now(),
+                &AccountInsightObservation::ResetCredits(None),
+            )
+            .await
+            .map_err(|error| map_store_error(error, "invalidate reset credits"))?
+        {
+            return Err(AdminError::conflict("账号或重置卡状态已变化，请重新查询"));
+        }
         match provider.consume_reset_credit(command.clone()).await {
             Ok(result) => Ok(result),
             Err(error)
