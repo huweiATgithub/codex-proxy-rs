@@ -1,14 +1,16 @@
 <script setup lang="ts">
+import type { AccountInsightIdentity } from '../composables/useAccountInsights'
 import type { Account } from '@/api'
 
 import { computed } from 'vue'
 
 import AccountPlanBadge from '@/components/account/AccountPlanBadge.vue'
 import { stablePresetVisualToneClass } from '@/utils/color'
+import { useAccountInsights } from '../composables/useAccountInsights'
 import AccountNotesPopover from './AccountNotesPopover.vue'
 
-type AccountIdentity = Pick<Account, 'id' | 'email' | 'planType' | 'planTypeDisplay'>
-  & Partial<Pick<Account, 'accountId' | 'notes' | 'name' | 'authenticationKind'>>
+type AccountIdentity = AccountInsightIdentity & Pick<Account, 'email' | 'planType' | 'planTypeDisplay'>
+  & Partial<Pick<Account, 'notes' | 'name' | 'capabilities'>>
 
 const props = withDefaults(
   defineProps<{
@@ -16,6 +18,7 @@ const props = withDefaults(
     size?: 'md' | 'lg'
     showPlan?: boolean
     showNotes?: boolean
+    showSubscription?: boolean
     titleMode?: 'local-part' | 'email'
     metaPosition?: 'title' | 'secondary'
     metaSize?: 'xs' | 'sm'
@@ -24,11 +27,18 @@ const props = withDefaults(
     size: 'md',
     showPlan: false,
     showNotes: false,
+    showSubscription: false,
     titleMode: 'local-part',
     metaPosition: 'title',
     metaSize: 'sm',
   },
 )
+
+const insights = useAccountInsights()
+const personalState = computed(() => insights.personalInfo(props.account))
+const personalInfo = computed(() => personalState.value.info)
+const subscription = computed(() => personalInfo.value?.subscription)
+const subscriptionVisible = computed(() => props.showSubscription && props.account.capabilities?.subscription)
 
 const emailText = computed(() => {
   if (props.account.authenticationKind === 'api_key' && props.account.name)
@@ -104,6 +114,23 @@ const avatarToneClass = computed(() => {
       <AccountNotesPopover v-else-if="visibleNotes" :notes="visibleNotes" class="mt-0.5" />
       <div v-else-if="secondaryText" class="truncate font-emphasis" :class="secondaryClass">
         {{ secondaryText }}
+      </div>
+      <div v-if="subscriptionVisible" class="mt-0.5 flex flex-wrap items-baseline gap-x-1.5 text-cp-xs leading-4 text-cp-text-tertiary">
+        <time v-if="subscription?.expiresAtDisplay" :datetime="subscription.expiresAt" class="tabular-nums text-cp-text-secondary">
+          {{ subscription.expiresAtDisplay }}
+        </time>
+        <span v-else>到期时间未知</span>
+        <button
+          type="button"
+          class="shrink-0 cursor-pointer rounded-cp-sm border-0 bg-cp-fill-quaternary px-1.5 py-0.5 text-[10px] leading-3 text-cp-link outline-none hover:bg-cp-fill-tertiary focus-visible:ring-2 focus-visible:ring-cp-control-outline disabled:cursor-wait disabled:opacity-60"
+          :aria-label="personalInfo ? '更新订阅信息' : '读取订阅信息'"
+          :aria-busy="personalState.loading"
+          :disabled="personalState.loading"
+          @click.stop="insights.loadPersonalInfo(account)"
+        >
+          {{ personalState.loading ? '读取中' : personalInfo ? '更新' : '读取' }}
+        </button>
+        <span v-if="personalState.error" role="status" class="text-[10px] text-cp-warning-text" :title="personalState.error">{{ personalInfo ? '更新失败' : '读取失败' }}</span>
       </div>
     </div>
   </div>

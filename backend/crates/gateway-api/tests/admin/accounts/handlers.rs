@@ -10,6 +10,97 @@ use tower::ServiceExt as _;
 use super::super::{AdminTestFixture, AdminTestState};
 
 #[tokio::test]
+async fn account_quota_preserves_reset_instants_and_unknown_times_across_timezones() {
+    use chrono::{DateTime, Utc};
+    use gateway_admin::model::provider_credentials::{
+        ProviderQuota, ProviderQuotaWindow, ProviderQuotaWindowRole, QuotaLocalUsageAttribution,
+    };
+    use gateway_core::account::{AccountStatusFacts, CredentialState, QuotaState};
+
+    for zone in ["UTC", "Asia/Kathmandu", "America/New_York"] {
+        let zone = zone
+            .parse::<gateway_core::time::DeploymentTimeZone>()
+            .unwrap();
+        let fixture = AdminTestFixture::with_timezone(zone).await;
+        fixture.auth.insert_session("valid-session");
+        let now = Utc::now();
+        let facts = AccountStatusFacts {
+            enabled: true,
+            credential_state: CredentialState::Ready,
+            access_token_expires_at: None,
+            quota: QuotaState::unknown(),
+            cooldown: None,
+            last_error_reason: None,
+            last_error_message: None,
+        };
+        *fixture.account.lock().unwrap() = Some(account_page_item(facts, now, "oauth"));
+        for reset_at in [
+            Some("2026-10-18T16:45:30Z".parse::<DateTime<Utc>>().unwrap()),
+            None,
+        ] {
+            *fixture.provider_quota.lock().unwrap() = Some(ProviderQuota {
+                plan_type: None,
+                observed_at: Some(now),
+                refresh_token_expires_at: None,
+                windows: vec![ProviderQuotaWindow {
+                    key: "weekly".to_owned(),
+                    group: "shortTerm".to_owned(),
+                    label: "周额度".to_owned(),
+                    limit_id: None,
+                    limit_name: None,
+                    role: Some(ProviderQuotaWindowRole::Secondary),
+                    local_usage_attribution: QuotaLocalUsageAttribution::Unavailable,
+                    window_seconds: Some(7 * 86_400),
+                    used_percent: None,
+                    reset_at,
+                    limit_reached: false,
+                    local_usage: None,
+                    provider_data: None,
+                }],
+                credits: None,
+                limit_reached: false,
+                provider_data: None,
+            });
+            let response = admin::accounts::router::<AdminTestState>()
+                .with_state(fixture.state())
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/admin/accounts")
+                        .header("x-request-id", "req_quota_reset_timezone")
+                        .header(header::COOKIE, "cpr_session=valid-session")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let body = to_bytes(response.into_body(), 32768).await.unwrap();
+            assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+            let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            let window = &value["data"]["items"][0]["quota"]["windows"][0];
+            match reset_at {
+                Some(reset_at) => {
+                    assert_eq!(
+                        DateTime::parse_from_rfc3339(window["resetAt"].as_str().unwrap())
+                            .unwrap()
+                            .to_utc(),
+                        reset_at
+                    );
+                    assert_eq!(
+                        window["resetAtDisplay"],
+                        zone.local(reset_at).format("%Y-%m-%d %H:%M:%S").to_string()
+                    );
+                }
+                None => {
+                    assert!(window["resetAt"].is_null());
+                    assert_eq!(window["resetAtDisplay"], "—");
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn account_cooldown_returns_an_instant_and_server_formatted_recovery() {
     use chrono::{DateTime, Duration, Utc};
     use gateway_core::account::{

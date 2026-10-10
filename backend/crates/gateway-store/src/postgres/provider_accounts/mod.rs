@@ -18,11 +18,12 @@ use gateway_admin::{
         },
         observability::TimeRange,
         provider_credentials::{
-            AuthorizationCommit, AuthorizationCredentialCommit, CredentialDetails,
-            CredentialImportCommit, CredentialImportResult, CredentialMutationResult,
-            CredentialRotationCommit, PluginAccountListQuery, PluginAccountPage,
-            PreparedCredentialCreate, PreparedCredentialImport, PreparedCredentialRotationFacts,
-            ProviderDocument, ProviderExportCredentialInput,
+            AccountInsightObservation, AccountInsights, AuthorizationCommit,
+            AuthorizationCredentialCommit, CredentialDetails, CredentialImportCommit,
+            CredentialImportResult, CredentialMutationResult, CredentialRotationCommit,
+            PluginAccountListQuery, PluginAccountPage, PreparedCredentialCreate,
+            PreparedCredentialImport, PreparedCredentialRotationFacts, ProviderDocument,
+            ProviderExportCredentialInput,
         },
     },
     ports::store::{AccountStore, AdminStoreError, AdminStoreErrorKind, AdminStoreResult},
@@ -57,6 +58,7 @@ mod admin_adapter;
 mod admin_queries;
 mod authorization;
 mod core_adapter;
+mod insights;
 mod mapping;
 mod quota_forecast;
 mod repository;

@@ -66,6 +66,7 @@ pub(super) fn account_view(
 ) -> AccountView {
     let AccountDirectoryItem {
         account,
+        insights,
         capacity,
         capabilities,
         plan_type_display,
@@ -88,6 +89,7 @@ pub(super) fn account_view(
     }
     let (quota, refresh_token_expires_at) = account_quota_view(quota, cooldown, now, time);
     AccountView {
+        insights: AccountInsightsData::from((insights, time)),
         capabilities: capabilities.into(),
         id: account.id.clone(),
         name: account.name,
@@ -295,6 +297,7 @@ pub(crate) fn quota_window_view(
         local_usage: local_usage
             .as_ref()
             .map(|value| quota_local_usage(value, time)),
+        reset_at: reset_at.as_ref().map(|value| time.rfc3339(value)),
         reset_at_display: reset_at.map_or_else(|| "—".to_owned(), |value| time.datetime(&value)),
     }
 }

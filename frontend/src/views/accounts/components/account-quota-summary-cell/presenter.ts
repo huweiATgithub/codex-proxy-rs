@@ -1,7 +1,32 @@
 import type { AccountQuotaWindowEntry } from '../../constants'
-import type { Account, AccountQuotaWindow } from '@/api'
+import type { Account, AccountQuotaWindow, AccountResetCredit } from '@/api'
 
 type AccountModelUsage = Account['usage']['models'][number]
+
+export function weeklyResetRemaining(window: AccountQuotaWindow | undefined, now: number) {
+  if (window?.windowSeconds !== 7 * 24 * 60 * 60 || !window.resetAt)
+    return null
+  const resetAt = Date.parse(window.resetAt)
+  if (!Number.isFinite(resetAt))
+    return null
+  const hours = Math.max(0, Math.floor((resetAt - now) / (60 * 60 * 1000)))
+  return `${Math.floor(hours / 24)}d${hours % 24}h`
+}
+
+export function soonestResetCredit(credits: readonly AccountResetCredit[]) {
+  let soonest: AccountResetCredit | undefined
+  let soonestTimestamp = Number.POSITIVE_INFINITY
+  for (const credit of credits) {
+    if (credit.status !== 'available' || !credit.expiresAt)
+      continue
+    const timestamp = Date.parse(credit.expiresAt)
+    if (Number.isFinite(timestamp) && timestamp < soonestTimestamp) {
+      soonest = credit
+      soonestTimestamp = timestamp
+    }
+  }
+  return soonest
+}
 
 /**
  * 根据账号最近一次模型请求选择对应额度组。
@@ -23,7 +48,7 @@ export function recentlyUsedQuotaEntry(
     ?? entries[0]
 }
 
-/** 一个额度组可能包含多个滚动窗口，摘要使用其中当前占用最高的窗口。 */
+/** 摘要优先使用当前占用最高的窗口，占用未知时保留首个窗口的重置时间 */
 export function representativeQuotaWindow(entry: AccountQuotaWindowEntry | undefined) {
   return entry?.windows.reduce<AccountQuotaWindow | undefined>((representative, window) => {
     if (typeof window.usedPercent !== 'number')
@@ -36,7 +61,7 @@ export function representativeQuotaWindow(entry: AccountQuotaWindowEntry | undef
       return window
     }
     return representative
-  }, undefined)
+  }, undefined) ?? entry?.windows[0]
 }
 
 function latestModelUsage(models: readonly AccountModelUsage[]) {

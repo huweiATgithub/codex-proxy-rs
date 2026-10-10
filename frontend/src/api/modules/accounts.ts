@@ -25,6 +25,7 @@ export interface AccountQuotaWindow {
   usedPercentDisplay: string
   limitReached: boolean
   localUsage?: unknown
+  resetAt: string | null
   resetAtDisplay: string
 }
 
@@ -127,6 +128,7 @@ export interface AccountModelAccess {
 }
 
 export interface Account {
+  insights: AccountInsights
   capabilities: AccountCapabilities
   outboundProxyEndpoint: string | null
   id: string
@@ -300,9 +302,20 @@ export interface AccountProfileStatisticsResponse {
 }
 
 export interface AccountPersonalInfoResponse {
+  subscriptionObservedAt: string | null
   profile: AccountProfileStatisticsResponse | null
   profileError: string | null
   subscription: AccountSubscription | null
+}
+
+export interface AccountInsightSnapshot<T> {
+  observedAt: string
+  value: T | null
+}
+
+export interface AccountInsights {
+  subscription: AccountInsightSnapshot<AccountSubscription> | null
+  resetCredits: AccountInsightSnapshot<AccountResetCreditsResponse> | null
 }
 
 export interface AccountResetCredit {
@@ -315,6 +328,7 @@ export interface AccountResetCredit {
 }
 
 export interface AccountResetCreditsResponse {
+  observedAt: string
   availableCount: number
   credits: AccountResetCredit[]
 }
