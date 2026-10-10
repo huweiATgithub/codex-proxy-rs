@@ -35,7 +35,7 @@ const {
   cancelConsume,
   confirmConsume,
 } = useAccountResetCredits({
-  accountId: () => props.account.id,
+  account: () => props.account,
   capabilities: () => props.account.capabilities,
   onConsumed: (accountId) => {
     if (props.account.id === accountId)

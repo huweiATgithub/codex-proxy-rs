@@ -1,3 +1,4 @@
+import type { AccountInsightIdentity } from './useAccountInsights'
 import type { AccountResetCredit } from '@/api'
 import { ZNotification } from '@codex-proxy/ui'
 import { computed, shallowReactive, shallowRef, watch } from 'vue'
@@ -8,6 +9,7 @@ import {
 } from '@/api'
 import { ApiError } from '@/api/request'
 import { errorMessage, generateRequestId } from '@/utils/operation'
+import { accountInsightKey } from './useAccountInsights'
 
 interface PendingResetCreditOperation {
   accountId: string
@@ -18,34 +20,40 @@ interface PendingResetCreditOperation {
 }
 
 interface ResetCreditsSnapshot {
+  identity: string
   credits: AccountResetCredit[]
   availableCount: number
 }
 
 interface ResetCreditsSession {
   accountId: string
+  identity: string
   snapshot: ResetCreditsSnapshot | null
   pendingOperation: PendingResetCreditOperation | null
   consuming: boolean
   loading: boolean
   loadError: string
+  loadIdentity: string
   loadSequence: number
   loadController?: AbortController
+  loadPromise?: Promise<void>
 }
 
 // 库存仍以主动查询的上游结果为准；未决操作和消费锁必须跨展开行卸载存续。
-const sessionsByAccountId = new Map<string, ResetCreditsSession>()
+const sessionsByAccountId = shallowReactive(new Map<string, ResetCreditsSession>())
 
 function getResetCreditsSession(accountId: string) {
   let session = sessionsByAccountId.get(accountId)
   if (!session) {
     session = shallowReactive<ResetCreditsSession>({
       accountId,
+      identity: '',
       snapshot: null,
       pendingOperation: null,
       consuming: false,
       loading: false,
       loadError: '',
+      loadIdentity: '',
       loadSequence: 0,
     })
     sessionsByAccountId.set(accountId, session)
@@ -53,18 +61,56 @@ function getResetCreditsSession(accountId: string) {
   return session
 }
 
-async function loadSessionCredits(session: ResetCreditsSession, silent = false) {
+function useResetCreditsSession(account: () => AccountInsightIdentity) {
+  const session = computed(() => getResetCreditsSession(account().id))
+  watch([session, () => accountInsightKey(account())], ([target, identity]) => {
+    // 换绑后隐藏旧库存，但未决消费和幂等标识仍属于原有内部账号会话
+    target.identity = identity
+  }, { immediate: true, flush: 'sync' })
+  return session
+}
+
+export function useAccountResetCreditsSnapshot(account: () => AccountInsightIdentity) {
+  const session = useResetCreditsSession(account)
+  return {
+    snapshot: computed(() => session.value.snapshot?.identity === session.value.identity ? session.value.snapshot : null),
+    loading: computed(() => session.value.loading),
+    consuming: computed(() => session.value.consuming),
+    loadError: computed(() => session.value.loadIdentity === session.value.identity ? session.value.loadError : ''),
+    ambiguous: computed(() => session.value.pendingOperation?.hasTransportFailure === true),
+    loadCredits: () => session.value.consuming
+      ? Promise.resolve()
+      : loadSessionCredits(session.value),
+  }
+}
+
+function loadSessionCredits(session: ResetCreditsSession, silent = false) {
+  if (session.loadPromise)
+    return session.loadPromise
+  // 行内按钮和弹窗共享同一次读取，不取消彼此的请求或改动消费会话
+  const promise = readSessionCredits(session, silent).finally(() => {
+    if (session.loadPromise === promise)
+      session.loadPromise = undefined
+  })
+  session.loadPromise = promise
+  return promise
+}
+
+async function readSessionCredits(session: ResetCreditsSession, silent: boolean) {
   const sequence = ++session.loadSequence
+  const identity = session.identity
   session.loadController?.abort()
   const controller = new AbortController()
   session.loadController = controller
   session.loading = true
   session.loadError = ''
+  session.loadIdentity = identity
   try {
     const result = await getAccountResetCredits({ accountId: session.accountId }, { silent, signal: controller.signal })
     if (sequence !== session.loadSequence)
       return
     session.snapshot = {
+      identity,
       credits: result.credits,
       availableCount: Math.max(0, result.availableCount),
     }
@@ -80,17 +126,18 @@ async function loadSessionCredits(session: ResetCreditsSession, silent = false) 
 }
 
 export function useAccountResetCredits(options: {
-  accountId: () => string
+  account: () => AccountInsightIdentity
   onConsumed: (accountId: string) => void
   capabilities: () => { consumeResetCredit: boolean }
 }) {
-  const session = shallowRef(getResetCreditsSession(options.accountId()))
-  const credits = computed(() => session.value.snapshot?.credits ?? [])
-  const availableCount = computed(() => session.value.snapshot?.availableCount ?? 0)
-  const hasSnapshot = computed(() => session.value.snapshot !== null)
+  const session = useResetCreditsSession(options.account)
+  const snapshot = computed(() => session.value.snapshot?.identity === session.value.identity ? session.value.snapshot : null)
+  const credits = computed(() => snapshot.value?.credits ?? [])
+  const availableCount = computed(() => snapshot.value?.availableCount ?? 0)
+  const hasSnapshot = computed(() => snapshot.value !== null)
   const loading = computed(() => session.value.loading)
   const consuming = computed(() => session.value.consuming)
-  const loadError = computed(() => session.value.loadError)
+  const loadError = computed(() => session.value.loadIdentity === session.value.identity ? session.value.loadError : '')
   const showConfirm = shallowRef(false)
   const selectedCreditId = shallowRef('')
   const pendingOperation = computed(() => session.value.pendingOperation)
@@ -141,6 +188,7 @@ export function useAccountResetCredits(options: {
       ? snapshot.credits
       : snapshot.credits.filter((_, index) => index !== creditIndex)
     target.snapshot = {
+      ...snapshot,
       credits: nextCredits,
       availableCount: Math.max(0, snapshot.availableCount - 1),
     }
@@ -227,10 +275,8 @@ export function useAccountResetCredits(options: {
   }
 
   watch(
-    options.accountId,
-    (accountId) => {
-      const target = getResetCreditsSession(accountId)
-      session.value = target
+    [session, () => session.value.identity],
+    () => {
       selectedCreditId.value = ''
       showConfirm.value = false
     },

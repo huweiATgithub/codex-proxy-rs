@@ -18,7 +18,7 @@ const period = ref('weekly')
 const explanationOpen = ref(false)
 const explanationId = useId()
 const { report, loading, refreshing, error, load, refresh } = useAccountQuotaForecast(
-  toRef(() => props.account.id),
+  toRef(() => props.account),
   open,
   account => emit('accountUpdated', account),
 )
