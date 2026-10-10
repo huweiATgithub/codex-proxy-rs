@@ -66,6 +66,7 @@ pub(super) fn account_view(
 ) -> AccountView {
     let AccountDirectoryItem {
         account,
+        insights,
         capacity,
         capabilities,
         plan_type_display,
@@ -88,6 +89,7 @@ pub(super) fn account_view(
     }
     let (quota, refresh_token_expires_at) = account_quota_view(quota, cooldown, now, time);
     AccountView {
+        insights: AccountInsightsData::from((insights, time)),
         capabilities: capabilities.into(),
         id: account.id.clone(),
         name: account.name,

@@ -1277,6 +1277,7 @@ fn project_reset_credits(
     credits: crate::transport::CodexRateLimitResetCredits,
 ) -> ProviderResetCredits {
     ProviderResetCredits {
+        observed_at: Utc::now(),
         available_count: credits.available_count,
         credits: credits
             .credits

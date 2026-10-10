@@ -35,7 +35,7 @@ const {
   cancelConsume,
   confirmConsume,
 } = useAccountResetCredits({
-  accountId: () => props.account.id,
+  account: () => props.account,
   capabilities: () => props.account.capabilities,
   onConsumed: (accountId) => {
     if (props.account.id === accountId)
@@ -81,7 +81,8 @@ const countLabel = computed(() => {
 watch(panelOpen, (isOpen) => {
   if (isOpen) {
     confirmation.value = null
-    void loadCredits()
+    if (!hasSnapshot.value)
+      void loadCredits()
     return
   }
   if (showConfirm.value)
