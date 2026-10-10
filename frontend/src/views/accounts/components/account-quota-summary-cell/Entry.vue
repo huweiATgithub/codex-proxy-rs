@@ -11,6 +11,7 @@ import AccountQuotaWindowGroup from './WindowGroup.vue'
 
 const props = withDefaults(defineProps<{
   label: string | null
+  summaryLabel?: string
   windows: AccountQuotaWindow[]
   showPercentage?: boolean
 }>(), {
@@ -19,7 +20,7 @@ const props = withDefaults(defineProps<{
 
 const detailHeading = computed(() => props.label)
 const detailTitle = computed(() => detailHeading.value ?? props.windows[0]?.labelDisplay ?? '额度详情')
-const summaryLabel = computed(() => props.label ?? props.windows[0]?.labelDisplay ?? '额度')
+const summaryLabel = computed(() => props.summaryLabel ?? props.label ?? props.windows[0]?.labelDisplay ?? '额度')
 const hasQuotaWindow = computed(() => props.windows.some(window => typeof window.usedPercent === 'number'))
 const detailItems = computed(() =>
   props.windows.map((window) => {

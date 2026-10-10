@@ -11,7 +11,7 @@ use gateway_core::{
     operation::RawJsonPayload,
     routing::{ProviderKind, UpstreamModelId},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
@@ -851,7 +851,7 @@ pub(crate) fn explicit_plan_type(value: Option<&str>) -> Option<&str> {
 }
 
 /// 按需查询的订阅周期，不参与额度或账号可用性判断
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderSubscription {
     pub starts_at: Option<DateTime<Utc>>,
     pub expires_at: DateTime<Utc>,
@@ -866,6 +866,7 @@ pub struct ProviderSubscription {
 pub struct AccountPersonalInfo {
     pub profile: Result<ProviderProfileStatistics, AdminError>,
     pub subscription: Option<ProviderSubscription>,
+    pub subscription_observed_at: Option<DateTime<Utc>>,
 }
 
 /// Provider 官方个人资料中的累计摘要
@@ -950,7 +951,7 @@ impl fmt::Debug for ProviderProfileAvatar {
 }
 
 /// Provider 返回的一张安全主动额度重置卡
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderResetCredit {
     pub id: String,
     pub status: Option<String>,
@@ -960,10 +961,32 @@ pub struct ProviderResetCredit {
 }
 
 /// Provider 主动额度重置卡列表
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderResetCredits {
+    pub observed_at: DateTime<Utc>,
     pub available_count: u64,
     pub credits: Vec<ProviderResetCredit>,
+}
+
+/// 账号辅助信息的最近观测；空值保留明确清除的时间，阻止旧请求恢复过期快照
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountInsightSnapshot<T> {
+    pub observed_at: DateTime<Utc>,
+    pub value: Option<T>,
+}
+
+/// 与当前账号身份绑定的持久辅助信息，不参与额度或调度
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccountInsights {
+    pub subscription: Option<AccountInsightSnapshot<ProviderSubscription>>,
+    pub reset_credits: Option<AccountInsightSnapshot<ProviderResetCredits>>,
+}
+
+/// 独立更新的订阅或重置卡观测；卡片空值表示消费后需要重新查询
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AccountInsightObservation {
+    Subscription(Option<ProviderSubscription>),
+    ResetCredits(Option<ProviderResetCredits>),
 }
 
 /// 一次主动额度重置卡消费命令
@@ -1240,6 +1263,7 @@ impl fmt::Debug for ProviderExport {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AccountDirectoryItem {
     pub account: AccountRecord,
+    pub insights: AccountInsights,
     pub capacity: super::accounts::AccountCapacity,
     pub capabilities: super::accounts::ProviderAccountCapabilities,
     /// Provider 提供的套餐展示名称；未识别到套餐时为空

@@ -661,9 +661,9 @@ config 返回 `{ name, plaintextKey }`，仅读取服务端会话绑定的当前
 | `GET` | `/api/admin/accounts/quota` | `accountId` | 读取当前额度，不强制访问上游；Provider 未提供额度能力时返回空额度投影 |
 | `GET` | `/api/admin/accounts/quota-forecast` | `accountId` | 按需读取周/月容量预测、源窗口剩余估算与采样依据，不刷新上游额度 |
 | `POST` | `/api/admin/accounts/quota/refresh` | `{ accountId }` | 访问 Provider 并刷新额度，同时同步额度所属状态 |
-| `GET` | `/api/admin/accounts/personal-info` | `accountId` | 按需汇聚 Provider 上游个人资料、累计活动与订阅信息，不更新额度或 credential |
+| `GET` | `/api/admin/accounts/personal-info` | `accountId` | 按需查询 Provider 个人资料与订阅，保存订阅观测，不更新额度或 credential |
 | `GET` | `/api/admin/accounts/profile-avatar` | `accountId`、可选 `version` | 返回支持头像能力的 Provider 字节流，需要管理员会话；`version` 仅区分浏览器缓存 |
-| `GET` | `/api/admin/accounts/reset-credits` | `accountId` | 查询支持该能力的 Provider 重置卡，不读取本地库存 |
+| `GET` | `/api/admin/accounts/reset-credits` | `accountId` | 按需查询 Provider 重置卡并保存最近观测 |
 | `POST` | `/api/admin/accounts/reset-credits` | `{ accountId, creditId?, redeemRequestId }` | 使用 UUIDv4 幂等键消费一张 Provider 重置卡 |
 | `GET` | `/api/admin/accounts/models` | `accountId` | 优先读取该 Provider + 套餐的模型 cache，缺失时有限实时拉取 |
 | `GET` | `/api/admin/accounts/models/catalog` | `accountId` | 读取指定账号的完整 Codex 原生模型目录，返回 `{ modelCount, observedAt, catalog }` |
@@ -1116,15 +1116,22 @@ OAuth 账号的额度、个人资料、订阅与重置卡请求先使用 `openai
 一次返回；每次请求均重新查询，不刷新 credential，不读取本地 usage/billing 记录，也不缓存或估算统计结果。
 查询沿用上述 OpenAI 404 路由回退
 
+订阅观测保存到后端；普通账号列表和详情的 `insights.subscription` 返回 `{ observedAt, value }`，
+无需请求上游。未查询时为 `null`，成功查询但无可用周期时 `value` 为 `null`
+
+保存的订阅与重置卡观测只用于当前账号实例及绑定身份；换绑或删除后以同 ID 重建账号不继承旧值。
+显式订阅或重置卡查询会尝试回收已删除账号的保存值，清理失败不改变主查询结果；没有后续查询时可能继续残留
+
 响应 `data` 包含：
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `profile` | object 或 null | 官方个人资料、累计统计与活动洞察；查询失败为 null |
 | `profileError` | string 或 null | 资料查询失败时的安全错误提示；成功为 null |
-| `subscription` | object 或 null | 当前绑定账号的订阅周期；无可用周期或查询失败为 null |
+| `subscription` | object 或 null | 当前绑定账号最近成功读取的订阅周期；没有可用观测时为 null |
+| `subscriptionObservedAt` | RFC 3339 字符串或 null | 当前订阅观测时间；查询失败时沿用最近成功观测 |
 
-两部分的查询结果独立：资料失败时仍返回可用订阅，订阅失败时仍返回资料。账号不存在、查询参数不合法或
+两部分的查询结果独立：资料失败时仍返回可用订阅，订阅失败时保留已保存的订阅并返回资料。账号不存在、查询参数不合法或
 无管理员会话时，仍返回标准错误；请求期间账号身份或 credential revision 改变时拒绝整份结果
 
 #### 官方资料与累计统计
@@ -1156,20 +1163,22 @@ OpenAI 使用当前凭据、绑定的上游账号 ID 和账号出站代理访问
 | `billingCurrency` | string 或 null | 上游计费币种 |
 | `observedAt` | RFC 3339 字符串 | 本次查询时间 |
 
-订阅不写入额度快照或数据库，不参与账号状态或调度；OpenAI 查询含 404 回退共用最多 5 秒预算，响应最多 64 KiB。
-上游失败或未提供有效周期时返回未知，不据此标记免费、过期或禁用；请求期间账号身份或 credential
+订阅不参与账号状态或调度；OpenAI 查询含 404 回退共用最多 5 秒预算，响应最多 64 KiB。
+上游失败时保留已保存的观测，成功但未提供有效周期时保存空值，不据此标记免费、过期或禁用；请求期间账号身份或 credential
 revision 变化时丢弃结果
 
 ### 主动额度重置卡
 
-`GET /api/admin/accounts/reset-credits?accountId=...` 每次都查询对应 Provider；后端不把卡片列表写入
-PostgreSQL 或 Redis。当前由 OpenAI Provider 为 OAuth 账号提供，账号视图分别以 `resetCredits` 和
+`GET /api/admin/accounts/reset-credits?accountId=...` 按需查询对应 Provider 并保存卡片数量、明细与观测时间，
+查询失败保留最近成功结果。普通账号列表和详情的 `insights.resetCredits` 返回 `{ observedAt, value }`，
+无需请求上游；未查询时为 `null`，消费后失效时 `value` 为 `null`。当前由 OpenAI Provider 为 OAuth 账号提供，账号视图分别以 `resetCredits` 和
 `consumeResetCredit` 表示查询和消费能力
 
 查询响应：
 
 ```json
 {
+  "observedAt": "2026-08-01T12:00:00Z",
   "availableCount": 1,
   "credits": [{
     "id": "credit_...",
@@ -1197,7 +1206,7 @@ PostgreSQL 或 Redis。当前由 OpenAI Provider 为 OAuth 账号提供，账号
 }
 ```
 
-消费响应只返回上游结果 `code` 和可选 `credit`。消费端确认成功后应重新 GET 卡片列表，并显式调用
+消费发送前使已保存的卡片观测失效，响应只返回上游结果 `code` 和可选 `credit`。消费端确认成功后应重新 GET 卡片列表，并显式调用
 `POST /api/admin/accounts/quota/refresh` 回读上游额度；未提供 `quotaRefresh` 能力时不发起该查询。
 不得因为消费成功直接改写本地 `resetAt` 或解除冻结。xAI 不支持该能力
 
