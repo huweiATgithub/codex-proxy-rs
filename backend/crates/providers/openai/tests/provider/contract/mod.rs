@@ -4488,7 +4488,10 @@ async fn websocket_pong_timeout_diagnosis_survives_ambiguous_send_wrapping() {
             if let Some(observation) = event.response_observation() {
                 pool_kind = observation.websocket_pool().or(pool_kind);
             }
-            if event.has_client_event() {
+            if event
+                .wire_event()
+                .is_some_and(|wire| wire.event_type() == Some("response.output_text.delta"))
+            {
                 break;
             }
         }
