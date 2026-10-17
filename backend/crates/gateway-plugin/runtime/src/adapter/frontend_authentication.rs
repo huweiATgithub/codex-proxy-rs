@@ -53,9 +53,6 @@ pub(crate) async fn prepare_entry(
         )
         .await
         .map_err(|_| AdminError::invalid("插件入口认证器注册失败"))?;
-    if !reply.payload.is_empty() {
-        return Err(AdminError::invalid("插件入口认证器注册结果无效"));
-    }
     let identifier: FrontendAuthenticationIdentifier = serde_json::from_value(reply.result)
         .map_err(|_| AdminError::invalid("插件入口认证器注册结果无效"))?;
     if !valid_identifier(&identifier.identifier) {
@@ -217,10 +214,6 @@ impl FrontendAuthenticationPlan for PluginFrontendAuthenticationPlan {
                 )
                 .await
                 .map_err(|_| FrontendAuthenticationError)?;
-            if reply.result != serde_json::json!({}) {
-                session.invalid_response(Stage::Authentication);
-                return Err(FrontendAuthenticationError);
-            }
             let result: FrontendAuthenticationResult = serde_json::from_slice(&reply.payload)
                 .map_err(|_| {
                     session.invalid_response(Stage::Authentication);

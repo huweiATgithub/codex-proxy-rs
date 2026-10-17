@@ -284,8 +284,8 @@ async fn management_model_stream_retains_selected_identity_until_completion_and_
 }
 
 #[tokio::test]
-async fn invalid_management_responses_stop_the_plugin_but_business_statuses_do_not() {
-    for (response, faulted) in [
+async fn invalid_management_responses_fail_the_call_without_stopping_the_plugin() {
+    for (response, invalid) in [
         (
             json!({"status":"invalid","content_type":"application/octet-stream"}),
             true,
@@ -311,19 +311,18 @@ async fn invalid_management_responses_stop_the_plugin_but_business_statuses_do_n
         );
         let views = service.views().await.unwrap();
         let result = service.handle(&views[0].target, request()).await;
-        if faulted {
+        if invalid {
             assert!(result.is_err());
         } else {
             assert_eq!(result.unwrap().status, 429);
         }
-        assert_eq!(
+        assert!(
             core.snapshots()
                 .acquire()
                 .unwrap()
                 .extensions()
                 .unwrap()
-                .is_ready(),
-            !faulted
+                .is_ready()
         );
         for probe in core.health_probes() {
             assert!(matches!(

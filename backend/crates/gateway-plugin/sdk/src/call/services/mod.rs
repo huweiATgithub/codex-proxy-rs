@@ -22,7 +22,6 @@ pub struct Request {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ServiceError {
     pub kind: String,
     pub message: String,

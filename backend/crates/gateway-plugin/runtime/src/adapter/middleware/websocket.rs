@@ -79,7 +79,6 @@ pub(super) async fn invoke(
             .decode(message, reply.payload)
             .map(Some)
             .map_err(|_| invalid()),
-        None if reply.payload.is_empty() => Ok(None),
-        None => Err(invalid()),
+        None => Ok(None),
     }
 }

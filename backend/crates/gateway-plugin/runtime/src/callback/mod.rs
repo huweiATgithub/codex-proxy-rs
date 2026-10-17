@@ -188,6 +188,7 @@ impl PluginCallbacks {
                 | gateway_plugin_sdk::Stage::Attempt
                 | gateway_plugin_sdk::Stage::Routing
                 | gateway_plugin_sdk::Stage::Scheduling
+                | gateway_plugin_sdk::Stage::Retry
         ) {
             return Err(denied());
         }
@@ -449,14 +450,7 @@ impl CallbackHandler for PluginCallbacks {
             }
             if method == gateway_plugin_sdk::call::services::CALL_METHOD {
                 return services
-                    .call(
-                        &context,
-                        scope,
-                        call.cancellation.clone(),
-                        service_actor,
-                        params,
-                        &payload,
-                    )
+                    .call(&context, &call, service_actor, params, &payload)
                     .await;
             }
             if is_private_state {

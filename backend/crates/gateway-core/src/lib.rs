@@ -359,10 +359,7 @@ impl CoreControlPlaneStartup {
         match self.publisher.refresh().await {
             Ok(_) => {}
             // 故障插件不能封锁管理修复入口；没有可用快照时数据面仍拒绝新请求
-            Err(
-                routing::snapshot::RuntimeSnapshotCompileError::ExtensionsUnavailable
-                | routing::snapshot::RuntimeSnapshotCompileError::InvalidExtensionModels,
-            ) => {}
+            Err(routing::snapshot::RuntimeSnapshotCompileError::ExtensionsUnavailable) => {}
             Err(_) => return Err(CoreError::SnapshotUnavailable),
         }
         Ok(CoreControlPlaneBundle {

@@ -438,7 +438,7 @@ impl CodexCredentialSelector {
             .and_then(|scope| scope.state.as_ref())
             .is_some_and(|state| state.excluded_accounts().contains(&selected_account))
         {
-            return Err(CredentialSelectionError::NoEligibleCredential);
+            return Err(CredentialSelectionError::SessionPolicyRestricted);
         }
         lease.cyber_policy_scope = cyber_policy_scope;
         Ok(())
@@ -922,6 +922,25 @@ impl CodexCredentialSelector {
                         })
                     } else if quota_exhausted {
                         Err(CredentialSelectionError::QuotaExhausted)
+                    } else if cyber_policy_scope
+                        .as_ref()
+                        .and_then(|scope| scope.state.as_ref())
+                        .is_some_and(|state| {
+                            let mut effective = candidates.iter().filter(|candidate| {
+                                pinned_account
+                                    .as_ref()
+                                    .is_none_or(|id| candidate.account.id() == id)
+                            });
+                            effective.next().is_some_and(|first| {
+                                state.excluded_accounts().contains(first.account.id())
+                                    && effective.all(|candidate| {
+                                        state.excluded_accounts().contains(candidate.account.id())
+                                    })
+                            })
+                        })
+                    {
+                        // 仅明确的会话策略排除使用此分类，空池、传输和容量失败保持原分类
+                        Err(CredentialSelectionError::SessionPolicyRestricted)
                     } else {
                         Err(CredentialSelectionError::NoEligibleCredential)
                     };
@@ -1781,6 +1800,8 @@ pub enum CredentialSelectionError {
     QueueRejected(#[from] QueueRejection),
     #[error("no eligible Codex account")]
     NoEligibleCredential,
+    #[error("upstream safety policy temporarily excludes accounts for this session")]
+    SessionPolicyRestricted,
     #[error("all eligible Codex accounts have exhausted their quota")]
     QuotaExhausted,
     #[error("Codex account capacity is unavailable")]

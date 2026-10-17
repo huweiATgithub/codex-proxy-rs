@@ -1242,6 +1242,7 @@ where
                         error.kind(),
                         ProviderErrorKind::AccountCapacityUnavailable
                             | ProviderErrorKind::NoEligibleAccount
+                            | ProviderErrorKind::SessionPolicyRestricted
                             | ProviderErrorKind::QuotaExhausted
                             | ProviderErrorKind::ConcurrencyQueueFull
                             | ProviderErrorKind::ConcurrencyQueueTimeout
@@ -1265,6 +1266,7 @@ where
                         error.kind(),
                         ProviderErrorKind::AccountCapacityUnavailable
                             | ProviderErrorKind::NoEligibleAccount
+                            | ProviderErrorKind::SessionPolicyRestricted
                             | ProviderErrorKind::QuotaExhausted
                             | ProviderErrorKind::ProviderInfrastructureUnavailable
                             | ProviderErrorKind::ConcurrencyQueueFull

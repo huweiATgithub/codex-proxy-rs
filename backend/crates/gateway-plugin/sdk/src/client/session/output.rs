@@ -27,8 +27,7 @@ impl Clone for Output {
 }
 
 impl Output {
-    pub(super) async fn send_data(&self, frame: Frame) -> Result<(), SessionError> {
-        let frame = EncodedFrame::new(frame)?;
+    pub(super) async fn send_data(&self, frame: EncodedFrame) -> Result<(), SessionError> {
         let permit = Arc::clone(&self.data_slots)
             .acquire_owned()
             .await
@@ -44,7 +43,7 @@ impl Output {
 
     pub(super) async fn send_data_until(
         &self,
-        frame: Frame,
+        frame: EncodedFrame,
         deadline: &CallDeadline,
         cancellation: &CallCancellation,
     ) -> Result<(), SessionError> {
@@ -57,7 +56,10 @@ impl Output {
     }
 
     pub(super) fn send_control(&self, frame: Frame) -> Result<(), SessionError> {
-        let frame = EncodedFrame::new(frame)?;
+        self.send_encoded_control(EncodedFrame::new(frame)?)
+    }
+
+    pub(super) fn send_encoded_control(&self, frame: EncodedFrame) -> Result<(), SessionError> {
         self.sender
             .try_send(Outbound {
                 frame,

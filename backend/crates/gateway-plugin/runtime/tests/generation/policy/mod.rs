@@ -5,6 +5,7 @@ mod facts;
 mod http;
 mod lifecycle;
 mod mounts;
+mod retry;
 mod scheduling;
 mod service;
 mod websocket;
@@ -210,6 +211,7 @@ fn operation() -> Operation {
             ["session_id", "c2VjcmV0"],
             ["thread_id", "c2VjcmV0"],
             ["X_Extension!#$%&'*+-.^_`|~", "b24="],
+            ["x-plugin opaque", "not-base64?"],
         ]
     })
     .as_object()
@@ -282,7 +284,7 @@ async fn retry_callback_preserves_entry_snapshot_and_ancestor_scope() {
 }
 
 #[tokio::test]
-async fn retry_policy_uses_ordered_delegation_and_rejects_disallowed_actions() {
+async fn retry_policy_preserves_decisions_and_leaves_replay_safety_to_core() {
     use gateway_core::{
         engine::policy::{RetryDecision, RetryFacts},
         error::ProviderErrorKind,
@@ -302,12 +304,12 @@ async fn retry_policy_uses_ordered_delegation_and_rejects_disallowed_actions() {
         (
             serde_json::json!({"decision":"retry"}),
             false,
-            RetryDecision::Stop,
+            RetryDecision::Retry,
         ),
         (
             serde_json::json!({"decision":"retry","account_id":"acct_forbidden"}),
             true,
-            RetryDecision::Stop,
+            RetryDecision::Retry,
         ),
     ] {
         let records = tempfile::tempdir().unwrap();
@@ -506,7 +508,8 @@ async fn model_router_preserves_order_and_exposes_complete_request_data() {
             {"name":"authorization","value_base64":"c2VjcmV0"},
             {"name":"session_id","value_base64":"c2VjcmV0"},
             {"name":"thread_id","value_base64":"c2VjcmV0"},
-            {"name":"x_extension!#$%&'*+-.^_`|~","value_base64":"b24="}
+            {"name":"x_extension!#$%&'*+-.^_`|~","value_base64":"b24="},
+            {"name":"x-plugin opaque","value_base64":"not-base64?"}
         ])
     );
     assert!(!lines[1].to_string().contains("secret"));

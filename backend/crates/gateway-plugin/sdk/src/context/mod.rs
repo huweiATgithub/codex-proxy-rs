@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Contributions, Stage};
 
+mod headers;
+
 /// 一次会话绑定不可变制品与配置；重启必须使用新的 incarnation
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -14,6 +16,8 @@ pub struct Handshake {
     pub instance_id: String,
     pub generation: u64,
     pub incarnation: String,
+    /// 配置由帧编码器放入业务 JSON 前缀
+    #[serde(skip)]
     pub configuration: serde_json::Value,
     #[serde(deserialize_with = "crate::capability::deserialize_contributions")]
     pub contributes: Contributions,
@@ -67,6 +71,8 @@ pub struct RequestContext {
     pub method: String,
     pub uri: String,
     pub http_version: String,
+    /// 帧内快照的头值使用 base64 字符串，避免 JSON 数字数组的逐字节开销
+    #[serde(with = "headers")]
     pub headers: Vec<crate::call::middleware::MiddlewareHeader>,
     pub peer_addr: Option<String>,
     pub client_ip: Option<String>,

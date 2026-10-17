@@ -10,21 +10,21 @@
 使用 `PluginBuilder::on` 注册
 `methods::UPSTREAM_ADAPTER_REGISTER` 与 `methods::UPSTREAM_ADAPTER_EXECUTE`
 
-注册返回 `UpstreamAdapterRegistration`，包含 1 至 16 个适配器：
+注册返回 `UpstreamAdapterRegistration`，最多包含 16 个适配器：
 
 | 字段 | 含义 |
 | --- | --- |
-| `id` | 实例内唯一标识，不是 Provider 或账号类型 |
+| `id` | 插件提供的适配器标识，不是 Provider 或账号类型 |
 | `provider` | `openai` 或 `xai` |
-| `base_url` | 以 `/` 结尾的 HTTP(S) 基址，无用户信息、查询串或 fragment |
-| `paths` | 不以 `/` 开头的基址相对路径，含 `inference` 或 `auxiliary` 用途，无通配符 |
+| `base_url` | 解析请求目标的基址，路径拼接遵循 URL join 规则 |
+| `paths` | 请求路径与 `inference` 或 `auxiliary` 用途的对应关系 |
 | `authentication_kinds` | 可使用的现有认证类型，宿主复核已选账号 |
 | `transport` | `http_json`、`http_sse` 或 `websocket` |
-| `protocol` | 请求和客户端 wire 使用的协议，须在清单输入、输出格式内 |
+| `protocol` | 请求和客户端 wire 使用的协议 |
 | `models` | 公开请求模型的精确匹配，空集合沿用绑定范围 |
 
 实例绑定沿用 Key、账号组、Provider、模型范围，只允许一次 `upstream` 绑定和 `reject` 故障策略。
-同一请求不能同时命中两个适配器；配置准备时拒绝重叠，执行时再次复核。适配器未命中时仍使用原生上游，
+多个声明命中时按发布顺序选择首个适配器，插件负责声明的业务含义。适配器未命中时仍使用原生上游，
 已命中但不可用时拒绝请求。安装、配置、启停和升级使用已有插件管理
 
 能力、清单、进程 RPC 和宿主兼容声明分别校验各自版本，见[清单](manifest.md)。

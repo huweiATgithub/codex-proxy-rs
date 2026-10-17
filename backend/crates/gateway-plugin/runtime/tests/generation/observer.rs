@@ -290,10 +290,10 @@ async fn frozen_plan_applies_scope_order_and_instance_deduplication() {
         assert_eq!(captured["request"]["uri"], "/v1/responses?observer=1");
         assert_eq!(captured["request"]["peer_addr"], "[2001:db8::1]:42000");
         assert_eq!(captured["request"]["client_ip"], "203.0.113.7");
-        assert_eq!(
-            captured["request"]["headers"][0]["value"],
-            serde_json::json!([128, 255])
-        );
+        let request: gateway_plugin_sdk::RequestContext =
+            serde_json::from_value(captured["request"].clone()).unwrap();
+        assert_eq!(request.headers[0].name, "x-binary");
+        assert_eq!(request.headers[0].value, [128, 255]);
     }
     assert_eq!(lines[0]["label"], "early");
     assert!(lines[0]["observation"]["terminal"].is_object());
@@ -554,7 +554,7 @@ async fn websocket_observer_bounds_event_count_and_payload_bytes_without_blockin
 }
 
 #[tokio::test]
-async fn malformed_observer_response_stops_only_the_observer() {
+async fn unused_observer_response_does_not_stop_the_shared_session() {
     let marker_directory = tempfile::tempdir().unwrap();
     let completed = marker_directory.path().join("healthy.jsonl");
     let (cache, _store, runtime) = setup(
@@ -586,7 +586,7 @@ async fn malformed_observer_response_stops_only_the_observer() {
             .with_provider(ProviderKind::new("openai").unwrap()),
     );
     wait_for_lines(&completed, 1).await;
-    assert!(!generation.is_ready());
+    assert!(generation.is_ready());
     assert!(generation.can_serve());
     drop(plan);
     drop(generation);

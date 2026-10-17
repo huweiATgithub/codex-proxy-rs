@@ -8,7 +8,7 @@ SDK 处于实验阶段；能力是否可用取决于宿主支持、清单声明�
 | --- | --- | --- |
 | SDK 包 | `0.1.0` | Rust 开发依赖，独立于网关版本 |
 | `manifestVersion` | `2` | 安装清单格式 |
-| `package.protocolVersion` | `3` | 宿主与插件的进程通信 |
+| `package.protocolVersion` | `4` | 宿主与插件的进程通信 |
 | `contributes.*.version` | `middleware` 为 `5`，`scheduler` / `upstream_adapter` 为 `3`，其余见声明 | 单项能力合同，见[扩展项声明](docs/manifest.md#扩展项简写) |
 
 开发顺序：编写[清单](docs/manifest.md) → 实现[能力处理器](docs/capabilities.md) → 用 [CLI](../../../apps/plugin-cli/README.md)
@@ -92,14 +92,23 @@ sequenceDiagram
 首个流式结果成功返回后，正文、会话及关联回调由资源取消与终态回收，不再沿用初始期限。
 普通调用继续使用原期限；资源模式仍保留并发容量、Credit、父调用关联及取消约束
 
-协议 v3 的帧头由大端 `u32` 元数据长度和大端 `u64` 载荷长度组成，随后依次传输 JSON 元数据和二进制载荷。
+协议 v4 的帧头由大端 `u32` 元数据长度和大端 `u64` 载荷长度组成，随后依次传输 JSON 元数据和二进制载荷。
 元数据保留 64 KiB 上限；正文总量不由插件传输层额外限制。传输内部以 256 KiB 为单次 I/O 块，
 不逐块发起 RPC，也不要求插件配置与宿主同步。读取按进度扩展缓冲区；截断正文必须报错，不能作为完整消息交付
 
-`Call` 带入口快照时，元数据的 `request_context_bytes` 指定载荷前缀中 JSON 快照的字节数，其后仍为原始业务正文。SDK 帧读写器自动拆装并还原 `CallContext.request`，不拼接复制业务正文；无快照时省略该长度字段
+JSON 元数据只承载消息类别、调用关联及分段长度。载荷依次包含入口快照 JSON、业务 JSON 和原始二进制正文：
+
+- `request_context_bytes` 指定 `CallContext.request` 的快照长度；无快照时省略
+- `data_bytes` 指定 `Hello.configuration`、`Call.params`、`Callback.params` 或 `Result.result` 的 JSON 长度；这些消息必须携带该段，其他消息省略
+- 两个 JSON 段之后的剩余字节是 `Frame.payload`，其内容不经过 JSON 编码
+
+入口快照的 `headers[].value` 使用标准带填充 base64 字符串，保留重复头与任意字节；Rust API 仍为 `Vec<u8>`。这个表示法仅用于 `RequestContext`，不改变中间件业务数据的头值合同
+
+SDK 帧读写器自动拆装这些字段，不拼接复制二进制正文。`Message` 与 `Handshake` 的 serde 表示只包含控制字段；完整消息应通过 `read_frame` / `write_frame` 读写
 
 帧写入队列前用 `EncodedFrame::new` 完成编码和校验，写泵通过 `EncodedFrame::write` 复用编码结果，
-避免重复序列化入口快照或让本地输入错误关闭共享传输。只需校验时可使用 `validate_frame`。
+避免重复序列化或让本地输入错误关闭共享传输。编码帧不保留业务 JSON 与入口快照的原始副本，
+`EncodedFrame::message` 仅供关联消息类别和 ID。只需校验时可使用 `validate_frame`。
 协议校验不会自动重试业务调用；部分读写中断后不能把当前位置当作新帧边界。
 底层帧读写方法不是取消安全的；自行编排会话时，不能在 `select!` 的其他分支完成后
 重建半途中的帧读写。`PluginSession` 会在处理调用完成通知时保留同一个读取 future，直到完整帧到达或会话关闭

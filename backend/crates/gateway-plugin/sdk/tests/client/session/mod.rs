@@ -193,7 +193,7 @@ impl PluginHandler for TestHandler {
                     ErrorCode::Upstream,
                     "x".repeat(MAXIMUM_STREAM_CHUNK_BYTES),
                 )),
-                "oversized_result" => Ok(CallReply::unary(
+                "large_result" => Ok(CallReply::unary(
                     Value::String("x".repeat(MAXIMUM_STREAM_CHUNK_BYTES)),
                     Vec::new(),
                 )),

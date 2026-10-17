@@ -121,7 +121,7 @@ fn installation_checks_protocol_engine_and_target() {
         manifest.package_for(&host, "windows", "aarch64"),
         Err(ManifestError::Platform)
     );
-    for protocol_version in [2, PROTOCOL_VERSION + 1] {
+    for protocol_version in [PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1] {
         manifest.package.as_mut().unwrap().protocol_version = protocol_version;
         assert_eq!(manifest.validate(), Err(ManifestError::Incompatible));
     }
@@ -409,7 +409,6 @@ fn contributes_rejects_duplicate_capability_keys_in_direct_json_parsing() {
         r#"{{
             "protocol_version":4,"artifact_sha256":"digest","plugin_id":"test.example",
             "instance_id":"instance","generation":1,"incarnation":"incarnation",
-            "configuration":{{}},
             "contributes":{{"middleware":{declaration},"middleware":{declaration}}}
         }}"#
     );

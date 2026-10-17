@@ -58,10 +58,6 @@ pub(super) async fn invoke(
             core::Error {kind:"unavailable".into(),message:fault.message.clone(),details:Some(serde_json::json!(fault))}
         })?,
     };
-    if !reply.payload.is_empty() {
-        ports.session.invalid_response(Stage::Service);
-        return Err(core::Error::invalid("服务返回了意外的二进制正文"));
-    }
     let response: wire::Response = ports
         .session
         .decode_response(Stage::Service, reply.result)

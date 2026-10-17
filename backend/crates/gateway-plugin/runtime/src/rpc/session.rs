@@ -199,11 +199,9 @@ pub struct RpcSession {
 }
 
 impl RpcSession {
-    /// 只用于已确认来自插件的合同错误，不接收业务错误或原始响应内容
+    /// 响应合同错误只结束所属调用，不影响共享传输与其他在途调用
     pub(crate) fn invalid_response(&self, stage: Stage) -> RpcError {
-        let error = RpcError::InvalidResponse(stage, None);
-        self.shared.fail(error.clone());
-        error
+        RpcError::InvalidResponse(stage, None)
     }
 
     pub(crate) fn decode_response<T: serde::de::DeserializeOwned>(
@@ -212,12 +210,7 @@ impl RpcSession {
         value: serde_json::Value,
     ) -> Result<T, RpcError> {
         serde_json::from_value(value).map_err(|source| {
-            let error = RpcError::InvalidResponse(
-                stage,
-                Some(gateway_core::error::ErrorSource::new(source)),
-            );
-            self.shared.fail(error.clone());
-            error
+            RpcError::InvalidResponse(stage, Some(gateway_core::error::ErrorSource::new(source)))
         })
     }
 }
@@ -258,10 +251,14 @@ impl PendingCall {
         for callback in self.callbacks.drain(..) {
             callback.abort();
         }
-        if let Some(stream) = self.stream.take() {
+        let stream = self.stream.take();
+        let sender = self.result.take();
+        // 先同步关闭调用资源，Core 才能在收到结果时看到全部发送副作用
+        drop(self);
+        if let Some(stream) = stream {
             stream.finish(result.as_ref().map(|_| ()).map_err(Clone::clone));
         }
-        if let Some(sender) = self.result.take() {
+        if let Some(sender) = sender {
             let _ = sender.send(result);
         }
     }
@@ -544,6 +541,10 @@ impl Shared {
             self.fail(RpcError::Protocol(None));
             return;
         };
+        self.send_encoded_control(frame);
+    }
+
+    pub(super) fn send_encoded_control(&self, frame: EncodedFrame) {
         if self.control.try_send(frame).is_err() {
             self.fail(RpcError::Capacity);
         }

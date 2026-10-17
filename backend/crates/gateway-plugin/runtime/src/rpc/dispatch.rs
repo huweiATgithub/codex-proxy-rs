@@ -5,7 +5,7 @@ use std::sync::Arc;
 use gateway_plugin_sdk::{
     ErrorCode, Frame, Message, PluginFault,
     call::middleware::NEXT_METHOD,
-    client::{EncodedFrame, read_frame, validate_frame},
+    client::{EncodedFrame, read_frame},
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -145,7 +145,7 @@ async fn read_loop<R: AsyncRead + Unpin>(
                                 return;
                             }
                             drop(pause);
-                            let mut reply = match result {
+                            let reply = match result {
                                 Ok(reply) => Frame {
                                     message: Message::Result {
                                         id,
@@ -156,16 +156,16 @@ async fn read_loop<R: AsyncRead + Unpin>(
                                 Err(error) => Frame::control(Message::Error { id, error }),
                             };
                             // 宿主回调的局部编码错误只能结束该调用，不能关闭共享写通道
-                            if validate_frame(&reply).is_err() {
-                                reply = Frame::control(Message::Error {
+                            match EncodedFrame::new(reply) {
+                                Ok(reply) => response.send_encoded_control(reply),
+                                Err(_) => response.send_control(Frame::control(Message::Error {
                                     id,
                                     error: PluginFault::new(
                                         ErrorCode::Fault,
                                         "host callback response cannot be encoded",
                                     ),
-                                });
+                                })),
                             }
-                            response.send_control(reply);
                             drop(permit);
                         });
                         if shared.track_callback(parent_id, task.abort_handle()) {

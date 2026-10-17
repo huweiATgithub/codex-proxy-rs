@@ -45,7 +45,7 @@ async fn seed_parents(pool: &PgPool) {
 
 #[tokio::test]
 async fn installation_migration_preserves_existing_parents_and_initializes_lazily() {
-    let Some(database) = TestDatabase::create_through("installation_upgrade", 35).await else {
+    let Some(database) = TestDatabase::create_through("installation_upgrade", 33).await else {
         return;
     };
     seed_parents(&database.pool).await;
