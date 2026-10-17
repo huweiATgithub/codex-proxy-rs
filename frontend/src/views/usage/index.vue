@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { UsageRecordStatus } from '@/api'
-import { useTableColumns, ZCard, ZIconButton, ZPageHeader, ZPagination, ZSegmented, ZSelect, ZTableColumnSettings } from '@codex-proxy/ui'
+import { useTableColumns, ZCard, ZDatePicker, ZIconButton, ZPageHeader, ZPagination, ZSegmented, ZTableColumnSettings } from '@codex-proxy/ui'
 
 import { CloudRain, Eye, List, Sun } from '@lucide/vue'
 import { shallowRef, watch } from 'vue'
@@ -14,7 +14,6 @@ import UsageSummaryCards from './components/UsageSummaryCards.vue'
 import { useUsageRecordDetail } from './composables/useUsageRecordDetail'
 import { useUsageRecordsTable } from './composables/useUsageRecordsTable'
 import { useUsageTimeRange } from './composables/useUsageTimeRange'
-import { usageTimeRangeOptions } from './constants'
 
 const recordView = shallowRef<UsageRecordStatus>('success')
 const { visibleColumns, columnOptions, setColumnVisible, setColumnOrder, resetColumns } = useTableColumns(usageRecordColumns, 'usage-records')
@@ -23,11 +22,10 @@ const recordViewOptions = [
   { label: '错误', value: 'error', icon: CloudRain },
   { label: '全部', value: 'all', icon: List },
 ]
-const { timeRange, timeRangeParams, refreshTimeRangeEnd, latestTimeRangeParams }
+const { timeRange, timeRangeParams, disabledDate, refreshTimeRangeEnd, latestTimeRangeParams }
   = useUsageTimeRange()
 
 const {
-  currentPage,
   searchQuery,
   providerQuery,
   usagePagination,
@@ -53,7 +51,6 @@ const { showDetailModal, selectedUsageRecord, handleViewDetail } = useUsageRecor
 
 watch(timeRange, () => {
   refreshTimeRangeEnd()
-  currentPage.value = 1
   void loadUsageRecords()
 })
 </script>
@@ -62,7 +59,16 @@ watch(timeRange, () => {
   <div class="w-full">
     <ZPageHeader title="使用统计" description="查看请求用量、性能趋势与调用错误记录">
       <template #actions>
-        <ZSelect v-model="timeRange" :options="usageTimeRangeOptions" class="w-34" />
+        <ZDatePicker
+          v-model="timeRange"
+          type="daterange"
+          :clearable="false"
+          :editable="false"
+          :disabled-date="disabledDate"
+          single-panel
+          aria-label="统计日期范围，仅可选择最近 31 天"
+          class="w-60 max-w-full"
+        />
         <ProviderFilter
           v-model="providerQuery"
           :disabled="refreshingList"

@@ -195,8 +195,8 @@ importers:
         specifier: 1.0.1
         version: 1.0.1(vue@3.5.43(typescript@6.0.3))
       '@codex-proxy/ui':
-        specifier: github:zyycn/codex-proxy-ui#v0.4.1
-        version: https://codeload.github.com/zyycn/codex-proxy-ui/tar.gz/1496e21637e7e80e87c7f75387e27ced5029187a(axios@1.20.0(debug@4.4.3))(change-case@5.4.4)(vite@8.3.0(@types/node@26.6.2)(jiti@2.7.0)(yaml@2.9.0))(vue@3.5.43(typescript@6.0.3))
+        specifier: github:zyycn/codex-proxy-ui#v0.5.0
+        version: https://codeload.github.com/zyycn/codex-proxy-ui/tar.gz/5eac879635ab4c15cfeea71d3d65fbf467780bbc(axios@1.20.0(debug@4.4.3))(change-case@5.4.4)(vite@8.3.0(@types/node@26.6.2)(jiti@2.7.0)(yaml@2.9.0))(vue@3.5.43(typescript@6.0.3))
       '@fontsource-variable/inter':
         specifier: ^5.3.0
         version: 5.3.0
@@ -418,9 +418,9 @@ packages:
     resolution: {integrity: sha512-y7/yvZ2TPAnR9+jnc00klvNNLkJiXFFrQA/hlLCcxA9a2A4zQIOimyFQ9XfwYKiGD1fb5GY8vbKIIgO8d5Tb2A==}
     engines: {node: '>= 20.12.0'}
 
-  '@codex-proxy/ui@https://codeload.github.com/zyycn/codex-proxy-ui/tar.gz/1496e21637e7e80e87c7f75387e27ced5029187a':
-    resolution: {gitHosted: true, integrity: sha512-/buYpi7vGPyKu0dwO4/P+dCYruUEjGDDlKGiVsW79BAtTmtVTDYo2DhdBFN5+haqTg+QjqEvTcym+2Fu9hOgSg==, tarball: https://codeload.github.com/zyycn/codex-proxy-ui/tar.gz/1496e21637e7e80e87c7f75387e27ced5029187a}
-    version: 0.4.1
+  '@codex-proxy/ui@https://codeload.github.com/zyycn/codex-proxy-ui/tar.gz/5eac879635ab4c15cfeea71d3d65fbf467780bbc':
+    resolution: {gitHosted: true, integrity: sha512-/n01jJCEKGxCzwkHkpBFUOP3Z+MeV5ufA/14qnrHJ3k9pm9cdb083Nhvd4KaIP9PftHXbCOISUzY9D9EzTZWBA==, tarball: https://codeload.github.com/zyycn/codex-proxy-ui/tar.gz/5eac879635ab4c15cfeea71d3d65fbf467780bbc}
+    version: 0.5.0
     engines: {node: '>=24'}
     peerDependencies:
       vite: ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0
@@ -1325,6 +1325,9 @@ packages:
 
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
+
+  dayjs@1.11.23:
+    resolution: {integrity: sha512-QDTCU0M0MxR3hQfnlDJfwekQiaanm1ubOD231u73WBckQ/fsamwRLiE2GBz6D3a/xF1NgfiDLJjXBa1hYOYTtQ==}
 
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
@@ -2825,13 +2828,14 @@ snapshots:
       fast-wrap-ansi: 0.2.2
       sisteransi: 1.0.5
 
-  '@codex-proxy/ui@https://codeload.github.com/zyycn/codex-proxy-ui/tar.gz/1496e21637e7e80e87c7f75387e27ced5029187a(axios@1.20.0(debug@4.4.3))(change-case@5.4.4)(vite@8.3.0(@types/node@26.6.2)(jiti@2.7.0)(yaml@2.9.0))(vue@3.5.43(typescript@6.0.3))':
+  '@codex-proxy/ui@https://codeload.github.com/zyycn/codex-proxy-ui/tar.gz/5eac879635ab4c15cfeea71d3d65fbf467780bbc(axios@1.20.0(debug@4.4.3))(change-case@5.4.4)(vite@8.3.0(@types/node@26.6.2)(jiti@2.7.0)(yaml@2.9.0))(vue@3.5.43(typescript@6.0.3))':
     dependencies:
       '@ant-design/colors': 8.0.1
       '@ant-design/fast-color': 3.0.1
       '@lucide/vue': 1.54.0(vue@3.5.43(typescript@6.0.3))
       '@vueuse/core': 15.0.0(vue@3.5.43(typescript@6.0.3))
       '@vueuse/integrations': 15.0.0(axios@1.20.0(debug@4.4.3))(change-case@5.4.4)(sortablejs@1.15.7)(vue@3.5.43(typescript@6.0.3))
+      dayjs: 1.11.23
       dompurify: 3.4.16
       es-toolkit: 1.52.0
       gsap: 3.15.0
@@ -3610,6 +3614,8 @@ snapshots:
   cssesc@3.0.0: {}
 
   csstype@3.2.3: {}
+
+  dayjs@1.11.23: {}
 
   debug@4.4.3:
     dependencies:

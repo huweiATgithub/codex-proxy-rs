@@ -447,7 +447,8 @@ Images 固定使用 OpenAI Provider，不重建正文或映射模型字段；Pro
 Images 排除已知为 Free 套餐的 OAuth 账号；套餐缺失或未知时不推断为 Free，API Key 账号不套用该套餐规则。
 其余账号仍需满足模型限制、额度等调度条件，实际生图权限由上游决定
 
-`/v1/alpha/search` 使用相同的 OpenAI Provider 原生端点边界：body（包括 `model`）不解析、不映射，
+`/v1/alpha/search` 使用相同的 OpenAI Provider 原生端点边界：正文原样转发，模型不映射，
+Provider 旁路读取请求中的 `model`，按[账号模型限制](#账号模型限制)选号。
 `x-codex-turn-metadata` 在移除客户端账号身份并按当前 lease 重写 installation ID 后转发；上游账号
 Authorization、Cookie、account ID、originator 和 User-Agent 均由代理安全重建。
 Images 与 Search 保留通过现有过滤规则的普通业务请求头及多值字节；Responses 原连接的 turn state
@@ -694,6 +695,7 @@ config 返回 `{ name, plaintextKey }`，仅读取服务端会话绑定的当前
 | 方法 | 路由 | 主要 query/body | 说明 |
 | --- | --- | --- | --- |
 | `GET` | `/api/admin/accounts` | `page`、`pageSize`、`provider`、`groupId`、`search`、`status`、排序字段 | 分页查询账号与汇总 |
+| `GET` | `/api/admin/accounts/concurrency` | `accountId`、`page=1`、`pageSize=20` | 查询账号当前并发占用；每页最多 100 条 |
 | `GET` | `/api/admin/accounts/detail` | `accountId` | 查询账号详情、额度和本地用量 |
 | `GET` | `/api/admin/accounts/export` | `accountIds`、`confirm=export_sensitive_accounts` | 显式导出最多 200 个账号的敏感 Provider 文档 |
 | `POST` | `/api/admin/accounts/import` | `{ provider, data, settings?, outboundProxyId? }` | 导入或按上游身份更新账号，可同时应用调度、分组设置与默认代理 |
@@ -713,6 +715,8 @@ config 返回 `{ name, plaintextKey }`，仅读取服务端会话绑定的当前
 | `GET` | `/api/admin/accounts/profile-avatar` | `accountId`、可选 `version` | 返回支持头像能力的 Provider 字节流，需要管理员会话；`version` 仅区分浏览器缓存 |
 | `GET` | `/api/admin/accounts/reset-credits` | `accountId` | 查询支持该能力的 Provider 重置卡，不读取本地库存 |
 | `POST` | `/api/admin/accounts/reset-credits` | `{ accountId, creditId?, redeemRequestId }` | 使用 UUIDv4 幂等键消费一张 Provider 重置卡 |
+| `GET` | `/api/admin/accounts/reset-credits/automation` | `accountId` | 读取自动使用开关与本地计划，不查询上游 |
+| `POST` | `/api/admin/accounts/reset-credits/automation` | `{ accountId, enabled }` | 设置账号自动使用开关，默认关闭 |
 | `GET` | `/api/admin/accounts/models` | `accountId` | 优先读取该 Provider + 套餐的模型 cache，缺失时有限实时拉取 |
 | `GET` | `/api/admin/accounts/models/catalog` | `accountId` | 读取指定账号的完整 Codex 原生模型目录，返回 `{ modelCount, observedAt, catalog }` |
 | `POST` | `/api/admin/accounts/models/refresh` | `{ accountId }` | 强制拉取最新模型并覆盖 cache |
@@ -733,6 +737,10 @@ config 返回 `{ name, plaintextKey }`，仅读取服务端会话绑定的当前
 账号视图的 `capacity` 返回查询时的普通并发容量：`usedSlots` 不含独立审批池和排队请求，
 读取运行态失败时为 `null`；`totalSlots` 是应用账号独立配置或全局默认值后的上限，`null` 表示不限。
 该上限不代表上游实际允许的并发数
+
+并发明细返回 `accountId`、`entries`、`total`、`page`、`pageSize` 和 `observedAt`，只统计普通并发池。每条包含 `leaseId`、`requestId`、`clientKeyId`、`clientKeyName`、`model`（入口请求模型）、`clientIp`、`startedAt`、`startedAtDisplay` 和 `occupiedMs`。占用时长从取得账号租约开始，不包含排队；缺少入口事实时相应字段为 `null`，租约仍计入总数
+
+查询需要管理员会话，账号不存在返回 404；`page` 从 1 开始，`pageSize` 为 1–100，偏移不能超过 `u32` 范围。结果是查询时的实时快照，按租约有效期排列，续期和请求完成可能改变跨页位置；接口禁止缓存，不提供历史记录
 
 模型目录导出保留上游原生模型对象和能力字段，不包含账号凭据；不支持 Codex 原生目录的账号不能导出。
 管理端下载文件名为 `cpr-model-catalog-<套餐>-<账号名称>.json`，文件正文为 `catalog`，可用于
@@ -788,11 +796,12 @@ Pro 使用 `all` 时也能参与 luna 调度。套餐名称不自动生成或修
 批量接口的调度、分组、模型与代理字段均可省略；省略的字段保持各账号原值。
 提供 `groupIds` 时替换完整分组集合，提供 `concurrencyLimit: null` 时恢复继承运行参数
 
-限制适用于 Responses HTTP、WebSocket 及其带压缩触发的请求，以及 Images 生图与编辑选号，包括重试、亲和和换号；没有合规账号时沿用
+限制适用于 Responses HTTP、WebSocket 及其带压缩触发的请求，以及 Images 生图、编辑与独立 Search 选号，包括重试、亲和和换号；没有合规账号时沿用
 无可用账号错误，不会回退到被禁止的账号。已开始请求使用冻结的政策，新请求使用已发布的新配置。
-Images 按请求正文的图片模型 ID 检查，不依赖文本模型目录；可手动添加目录未列出的图片模型 ID。
-图片模型缺失、重复或无法识别时，仅使用模型政策为 `all` 的账号，不推测上游默认模型。
-独立 Search 及管理员连接测试不受该模型限制；连接测试成功只证明指定账号的上游能力。
+Images 和 Search 按原始请求正文的模型 ID 检查，不依赖模型目录或全局模型映射；可手动添加目录未列出的模型 ID。
+模型缺失、重复或无法识别时，仅使用模型政策为 `all` 的账号，不推测上游默认模型。
+Search 的选号限制不约束插件在选号后主动改写正文。
+管理员连接测试不受该模型限制；连接测试成功只证明指定账号的上游能力。
 普通 `/v1/models` 和单模型查询将已发现的 OpenAI 模型关联到来源账号，至少一个来源账号在当前 Key 范围内且政策允许时才展示；
 同 Provider 中未发现该模型的 `all` 账号不会使它进入列表。原生目录保留已有来源选择和完整模型对象
 
@@ -1231,8 +1240,8 @@ revision 变化时丢弃结果
 
 ### 主动额度重置卡
 
-`GET /api/admin/accounts/reset-credits?accountId=...` 每次都查询对应 Provider；后端不把卡片列表写入
-PostgreSQL 或 Redis。当前由 OpenAI Provider 为 OAuth 账号提供，账号视图分别以 `resetCredits` 和
+`GET /api/admin/accounts/reset-credits?accountId=...` 每次都查询对应 Provider，不用本地计划代替库存。
+当前由 OpenAI Provider 为 OAuth 账号提供，账号视图分别以 `resetCredits` 和
 `consumeResetCredit` 表示查询和消费能力
 
 查询响应：
@@ -1271,6 +1280,26 @@ PostgreSQL 或 Redis。当前由 OpenAI Provider 为 OAuth 账号提供，账号
 不得因为消费成功直接改写本地 `resetAt` 或解除冻结。xAI 不支持该能力
 
 消费期间账号身份或凭据版本变化时返回结果未知，不将旧结果套用到新绑定账号
+
+自动使用通过 `/api/admin/accounts/reset-credits/automation` 按账号开启，默认关闭；账号本身停用时暂停执行。
+GET 和 POST 均返回 `enabled`、`leadMinutes`、`nextDiscoveryAtDisplay`、`nextConsumeAtDisplay`、`lastResult`，
+时间展示沿用部署时区，无计划时为 `null`。运行设置 `resetCreditLeadMinutes` 默认 10，范围 1～1440 分钟
+
+`resetCreditMaxWeeklyRemainingPercent` 是可选的全局剩余周额度上限，范围 0～100 的整数，默认 `null` 表示不限制。
+设置后，每次新的自动消费前刷新账号周额度；剩余比例大于上限或无法确认周额度时，保留卡片并在到期前错峰重查，
+等于上限时允许使用。仅采用账号级周窗口，不回退到短期、月度或模型专属额度；手动使用不受此上限影响
+
+开启后在一分钟内错峰执行首次发现，此后按部署时区每天随机发现一次，普通发现失败也等待下一日。
+已知且有明确到期时间的可用卡片在提前窗口内错峰执行，消费前重新查询；已在其他地方使用或已到期的卡片
+会移出计划，查询失败不直接消费。上游返回 `already_redeemed` 后结束该次操作，不切换另一张卡重试。
+无卡片 ID 或到期时间时不自动消费；每天发现一次可能错过两次发现之间发放并到期的卡片
+
+`lastResult` 的 `pending` 表示消费结果待确认；重试沿用已持久化的幂等键，重启或关闭再开启也不换键。
+`expired_unknown` 表示未确认操作的卡片已经到期，停止重试；`reset`、`already_redeemed` 表示对应终态，
+`discovery_failed` 表示最近查询失败，`not_redeemed` 表示上游明确未完成消费。
+`weekly_quota_above_threshold` 表示剩余周额度高于上限，`weekly_quota_unavailable` 表示暂时无法确认周额度；
+`nothing_to_reset` 表示当前没有可重置窗口，这三种状态均保留卡片并稍后重查，其中 `nothing_to_reset` 的下一次消费使用新幂等键。
+结果未知的未决操作继续使用原幂等键确认，不重新应用周额度上限；自动操作未决且对应卡片尚未到期时，手动消费返回 `409`
 
 ## 6. 账号分组
 
@@ -1453,6 +1482,7 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 | [历史保留](#历史保留) | `usageRetentionDays`、`opsEventRetentionDays`、`auditRetentionDays` |
 | [账号自动冻结](#账号自动冻结) | `accountAutoFreezeEnabled`、`accountAutoFreezeThreshold`、`accountAutoFreezeWindowSeconds`、`accountAutoFreezeDurationSeconds`、`accountAutoFreezeProbeEnabled`、`accountAutoFreezeProbeModel`、`accountAutoFreezeAdaptiveConcurrency` |
 | [账号预热](#账号预热) | `accountWarmupEnabled`、`accountWarmupScheduleTime`、`accountWarmupModel` |
+| [主动额度重置卡](#主动额度重置卡) | `resetCreditLeadMinutes`、`resetCreditMaxWeeklyRemainingPercent` |
 
 ### 历史保留
 

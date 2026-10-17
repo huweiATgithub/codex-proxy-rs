@@ -60,6 +60,8 @@ export function useSettingsForm() {
     accountWarmupEnabled: false,
     accountWarmupScheduleTime: '08:00',
     accountWarmupModel: '',
+    resetCreditLeadMinutes: 10 as number | null,
+    resetCreditMaxWeeklyRemainingPercent: null as number | null,
   })
 
   function snapshot() {
@@ -78,7 +80,7 @@ export function useSettingsForm() {
     mappings.value = initial.mappings
   }
 
-  function numericModel(key: 'refreshMarginSeconds' | 'refreshConcurrency' | 'maxConcurrentPerAccount' | 'openaiGuardianReservedConcurrency' | 'maxAccountRotations' | 'openaiSessionAffinityTtlHours' | 'maxWaitingPerKey' | 'maxWaitingPerAccount' | 'concurrencyWaitTimeoutSeconds' | 'responsesMaxDecompressedBodyMiB' | 'usageRetentionDays' | 'accountAutoFreezeThreshold' | 'accountAutoFreezeWindowSeconds' | 'accountAutoFreezeDurationSeconds') {
+  function numericModel(key: 'resetCreditMaxWeeklyRemainingPercent' | 'resetCreditLeadMinutes' | 'refreshMarginSeconds' | 'refreshConcurrency' | 'maxConcurrentPerAccount' | 'openaiGuardianReservedConcurrency' | 'maxAccountRotations' | 'openaiSessionAffinityTtlHours' | 'maxWaitingPerKey' | 'maxWaitingPerAccount' | 'concurrencyWaitTimeoutSeconds' | 'responsesMaxDecompressedBodyMiB' | 'usageRetentionDays' | 'accountAutoFreezeThreshold' | 'accountAutoFreezeWindowSeconds' | 'accountAutoFreezeDurationSeconds') {
     return computed({
       get: () => (form[key] === null ? '' : String(form[key])),
       set: (value: string) => {
@@ -101,6 +103,8 @@ export function useSettingsForm() {
   const maxWaitingPerKeyValue = numericModel('maxWaitingPerKey')
   const maxWaitingPerAccountValue = numericModel('maxWaitingPerAccount')
   const responsesMaxDecompressedBodyMiBValue = numericModel('responsesMaxDecompressedBodyMiB')
+  const resetCreditLeadMinutesValue = numericModel('resetCreditLeadMinutes')
+  const resetCreditMaxWeeklyRemainingPercentValue = numericModel('resetCreditMaxWeeklyRemainingPercent')
   const usageRetentionDaysValue = numericModel('usageRetentionDays')
   const concurrencyWaitTimeoutSecondsValue = numericModel('concurrencyWaitTimeoutSeconds')
   const accountAutoFreezeThresholdValue = numericModel('accountAutoFreezeThreshold')
@@ -151,6 +155,8 @@ export function useSettingsForm() {
     form.accountWarmupEnabled = data.accountWarmupEnabled
     form.accountWarmupScheduleTime = data.accountWarmupScheduleTime ?? '08:00'
     form.accountWarmupModel = data.accountWarmupModel ?? ''
+    form.resetCreditLeadMinutes = data.resetCreditLeadMinutes
+    form.resetCreditMaxWeeklyRemainingPercent = data.resetCreditMaxWeeklyRemainingPercent
     mappings.value = Object.entries(data.modelMappings).map(([requestedModel, upstreamModel]) => ({
       requestedModel,
       upstreamModel,
@@ -258,6 +264,16 @@ export function useSettingsForm() {
       ZNotification.warning({ message: 'Responses 解压上限应为有效的正整数（MiB）' })
       return
     }
+    const resetCreditMaxWeeklyRemainingPercent = form.resetCreditMaxWeeklyRemainingPercent
+    if (resetCreditMaxWeeklyRemainingPercent !== null && (!Number.isInteger(resetCreditMaxWeeklyRemainingPercent) || resetCreditMaxWeeklyRemainingPercent < 0 || resetCreditMaxWeeklyRemainingPercent > 100)) {
+      ZNotification.warning({ message: '剩余周额度上限应为 0～100 的整数，留空表示不限制' })
+      return
+    }
+    const resetCreditLeadMinutes = form.resetCreditLeadMinutes
+    if (resetCreditLeadMinutes === null || !Number.isInteger(resetCreditLeadMinutes) || resetCreditLeadMinutes < 1 || resetCreditLeadMinutes > 1440) {
+      ZNotification.warning({ message: '重置卡提前使用时间应为 1～1440 分钟的整数' })
+      return
+    }
     const usageRetentionDays = form.usageRetentionDays
     if (usageRetentionDays === null || !Number.isInteger(usageRetentionDays) || usageRetentionDays < 1 || usageRetentionDays > 31) {
       ZNotification.warning({ message: '历史保留天数应为 1–31 的整数' })
@@ -350,6 +366,8 @@ export function useSettingsForm() {
         accountWarmupEnabled: form.accountWarmupEnabled,
         accountWarmupScheduleTime: scheduleTime,
         accountWarmupModel: warmupModel || null,
+        resetCreditLeadMinutes,
+        resetCreditMaxWeeklyRemainingPercent,
       })
       applySettings(result)
       ZNotification.success({ message: '设置已保存' })
@@ -386,6 +404,8 @@ export function useSettingsForm() {
     concurrencyWaitTimeoutSecondsValue,
     responsesMaxDecompressedBodyMiBValue,
     usageRetentionDaysValue,
+    resetCreditLeadMinutesValue,
+    resetCreditMaxWeeklyRemainingPercentValue,
     accountAutoFreezeThresholdValue,
     accountAutoFreezeWindowSecondsValue,
     accountAutoFreezeDurationSecondsValue,
