@@ -1710,6 +1710,12 @@ models.dev 同步只导入可表示为当前文本 Token 计价的 OpenAI/xAI �
 该配置作用于 Client Key 的 OpenAI 模型请求与原生模型目录，适用于 HTTP/SSE、WebSocket、Images 和 Search。
 不改变 xAI、入站客户端版本门禁、账号认证或后台 Desktop 专属操作
 
+Key 的独立 OpenAI 配置可设置 `perKeyInstallationId`，布尔值，默认 `false`，预设与自定义配置均支持
+该选项属于 Key 的 `providerRequestProfileOverrides.openai` 独立配置，全局配置不接受该字段
+开启后，为此 Key 使用的每个账号分别生成并保存 UUIDv4 安装 ID；关闭或继承全局配置时使用账号安装 ID
+UA 改写不影响身份选择，修改独立 UA、关闭后重新开启及进程重启均复用已保存的 Key 与账号安装 ID
+返回全局继承会删除整个独立配置，再次选择独立配置时开关默认为关闭；手动开启后复用原安装 ID
+
 自定义配置使用 `{ "mode": "custom", "userAgent": "完整 UA" }`。
 已识别的 `Codex Desktop`、`codex-tui`、`codex_exec`、`codex_cli_rs` 前缀由后端解析 `originator` 和 Core `version`，
 显式提供的配套字段必须与识别结果一致。未知前缀须另填 `originator` 和 `codexVersion`，这两个字段与 UA 一起发送。
