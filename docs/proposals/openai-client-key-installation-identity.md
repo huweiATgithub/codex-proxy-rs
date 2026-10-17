@@ -29,8 +29,17 @@ to `CODEX_HOME`; scoping it to a client-key/account pair is a proxy-specific cho
 The UI exposes the choice; configuration parsing must also enforce its scope so
 API updates have the same behavior.
 
+Carry two explicit flags alongside the resolved OpenAI request profile in the
+Provider-visible execution context: whether the key uses an independent OpenAI
+UA configuration, and whether the key enables per-key installation IDs. Derive
+the first flag from the key's existing OpenAI override and persist the second
+with that override. Both flags follow the existing Key settings, runtime
+snapshot, and request-profile resolution path, preserving their key-configured
+values for the execution.
+
 UA and installation ID are independent request values. Request-time UA rewrites,
-including plugin rewrites, do not affect installation identity selection.
+including plugin rewrites, do not change either flag or affect installation
+identity selection.
 
 ## Persistence and request flow
 
@@ -45,10 +54,14 @@ Add a normal upstream migration for an `openai_client_installations` table:
 Use `(client_api_key_id, provider_account_id)` as the primary key. Both parent
 references use foreign keys with `ON DELETE CASCADE`.
 
-Resolve the mode from the current execution's key configuration. After account
-selection, select the installation ID as follows:
+Resolve the installation ID when constructing `CodexCredentialLease`, after
+selecting the account and acquiring its scheduling lease, before running the
+attempt middleware. The selector already receives `AttemptContext`, which
+contains the authenticated client-key ID and the resolved request profile.
+Extend the existing configuration path to carry both flags to this point and
+use per-key mode only when both are true:
 
-1. In account mode, immediately use the ID already available on the account lease
+1. In account mode, immediately use the existing installation ID from the selected account's loaded credential
 2. In per-key mode, look up the pair in the in-memory UUID cache
 3. On a cache miss, read the persisted mapping
 4. If the row is absent, generate UUIDv4 and insert it without overwriting an existing row
@@ -63,10 +76,24 @@ a retry can load any mapping that was committed before a response was lost.
 New keys and accounts need no eager initialization. Their first request in
 per-key mode creates the missing pair. Deleting either parent removes its rows.
 
-The OpenAI provider owns identity selection and the cache. Store implements
-mapping persistence through a provider-owned port. The existing Admin/Core
-configuration and snapshot paths carry the option, and transport applies the
-selected ID through the existing metadata-scoping helpers.
+Keep the mapping capability in dedicated modules within the existing crates.
+The proposed locations below are relative to `backend/crates/`:
+
+| Location | Responsibility |
+| --- | --- |
+| `gateway-core/src/provider_ports/installation.rs` | Mapping persistence contract: read a pair, insert it if absent, and return the persisted winner |
+| `gateway-store/src/postgres/client_installations.rs` | PostgreSQL adapter for the mapping table and concurrent inserts |
+| `providers/openai/src/installation.rs` | Identity selection, UUID generation, bounded cache, and coalesced initialization |
+
+Wire the adapter through the existing `StoreBundle` and `ProviderStorePorts`.
+The storage contract handles only key/account UUID mappings; the OpenAI provider
+owns the activation rules and cache. This follows the existing crate dependency
+direction, with the port defined in Core and implemented by Store.
+
+Write the selected UUID into the existing `CodexCredentialLease.installation_id`
+field. Its synchronous `installation_id()` getter and the existing request
+metadata-scoping helpers consume that value throughout the request. The
+account's persisted credential identity remains owned by the credential path.
 
 ## Cache and configuration lifecycle
 
@@ -112,6 +139,7 @@ then-current identity.
 ## Implementation acceptance criteria
 
 - At execution time, per-key identity requires both independent UA configuration and an enabled toggle; either condition being false bypasses UUID cache/store access, including when a pair mapping already exists
+- Both key-configured flags reach lease construction through the existing settings and snapshot path; the lease carries the selected UUID into the existing request-scoping chain
 - Request-time UA rewrites, including plugin rewrites, do not change the identity mode or selected UUID
 - Key edits take effect after normal snapshot refresh without restarting, including subsequent downstream WebSocket executions
 - Different keys and accounts receive distinct, stable UUIDv4 mappings
