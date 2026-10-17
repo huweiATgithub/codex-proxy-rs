@@ -1,4 +1,4 @@
-//! PostgreSQL 持久化 Client Key 与 OpenAI 账号的安装 UUID
+//! PostgreSQL 持久化 Client Key 与 OpenAI 账号的 installation id
 
 use futures::future::BoxFuture;
 use gateway_core::provider_ports::{

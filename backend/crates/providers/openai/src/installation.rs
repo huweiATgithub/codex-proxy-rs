@@ -1,4 +1,4 @@
-//! 按 Key 与账号解析持久安装身份，合并并发初始化并限制内存缓存容量
+//! 按 Key 与账号解析持久 installation id，合并并发初始化并限制内存缓存容量
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -46,7 +46,7 @@ impl CodexInstallationResolver {
                 )
             })?
             .is_some_and(|profile| {
-                profile.independent_ua_configuration && profile.per_key_installation_id
+                profile.independent_ua_configuration && profile.per_key_installation_id_enabled
             });
         if !per_key {
             return Ok(account_installation_id);

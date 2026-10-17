@@ -38,15 +38,15 @@ const profileSource = computed({
       model.value = null
     }
     else if (options.value?.globalConfiguration) {
-      model.value = { ...options.value.globalConfiguration, perKeyInstallationId: false }
+      model.value = { ...options.value.globalConfiguration, perKeyInstallationIdEnabled: false }
     }
   },
 })
-const perKeyInstallationId = computed({
-  get: () => model.value?.perKeyInstallationId ?? false,
+const perKeyInstallationIdEnabled = computed({
+  get: () => model.value?.perKeyInstallationIdEnabled ?? false,
   set: (value: boolean) => {
     if (model.value)
-      model.value = { ...model.value, perKeyInstallationId: value }
+      model.value = { ...model.value, perKeyInstallationIdEnabled: value }
   },
 })
 async function load() {
@@ -131,13 +131,13 @@ onMounted(() => load())
     />
     <div v-if="allowInherit && !inherited" class="grid gap-1.5">
       <ZSwitch
-        v-model="perKeyInstallationId"
-        label="独立安装 ID"
+        v-model="perKeyInstallationIdEnabled"
+        label="独立 installation id"
         class="justify-self-start"
         :disabled="disabled || loading"
       />
       <p class="m-0 text-cp-sm text-cp-text-secondary">
-        为此 Key 使用的每个账号分别保存安装 ID
+        为此 Key 使用的每个账号分别保存 installation id
       </p>
     </div>
     <ClientProfilePreviewPanel

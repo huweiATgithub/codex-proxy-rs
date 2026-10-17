@@ -1,4 +1,4 @@
-//! 安装身份在 HTTP、WebSocket 与独立端点上的元数据一致性及配置切换合同
+//! installation id 在 HTTP、WebSocket 与独立端点上的元数据一致性及配置切换合同
 
 use super::*;
 use crate::support::MemoryClientInstallations;
@@ -6,6 +6,7 @@ use gateway_core::provider_ports::ProviderClientInstallationKey;
 use std::sync::atomic::Ordering;
 
 const ACCOUNT_ID: &str = "acct_provider_contract";
+const SECOND_ACCOUNT_ID: &str = "acct_scope_same";
 const CLIENT_KEY_ID: &str = "key_installation_contract";
 const TURN_METADATA: &str = r#"{"installation_id":"downstream-installation","future":true}"#;
 
@@ -32,7 +33,7 @@ fn independent_configuration(enabled: bool, user_agent: &str) -> OpaqueProviderD
         json!({
             "mode": "custom",
             "userAgent": user_agent,
-            "perKeyInstallationId": enabled,
+            "perKeyInstallationIdEnabled": enabled,
         })
         .as_object()
         .unwrap()
@@ -102,6 +103,10 @@ fn installation_context(
 }
 
 fn installation_generate(websocket: bool) -> Operation {
+    installation_generate_for_account(websocket, ACCOUNT_ID)
+}
+
+fn installation_generate_for_account(websocket: bool, account_id: &str) -> Operation {
     let payload = ProtocolPayload::json_object(
         "openai",
         json!({
@@ -110,7 +115,10 @@ fn installation_generate(websocket: bool) -> Operation {
             "session_id": "installation-session",
             "thread_id": "installation-session",
             "installation_id": "downstream-installation",
+            "installationId": "downstream-installation",
             "client_metadata": {
+                "installation_id": "downstream-installation",
+                "installationId": "downstream-installation",
                 "x-codex-installation-id": "downstream-installation",
                 "x-codex-turn-metadata": TURN_METADATA,
             },
@@ -123,6 +131,16 @@ fn installation_generate(websocket: bool) -> Operation {
     .with_context(Map::from_iter([
         ("use_websocket".to_owned(), json!(websocket)),
         ("turn_metadata".to_owned(), json!(TURN_METADATA)),
+        (
+            "opaque_request_headers".to_owned(),
+            json!([
+                [
+                    "x-codex-installation-id",
+                    STANDARD.encode("downstream-installation")
+                ],
+                ["x-codex-turn-metadata", STANDARD.encode(TURN_METADATA)]
+            ]),
+        ),
     ]));
     let mut request = GenerateRequest::from_protocol_payload(payload);
     if websocket {
@@ -130,7 +148,7 @@ fn installation_generate(websocket: bool) -> Operation {
             ProviderSessionState::new(
                 "openai",
                 json!({
-                    "account_id": ACCOUNT_ID,
+                    "account_id": account_id,
                     "conversation_id": "installation-conversation",
                     "continuation_scope": "persisted",
                 })
@@ -153,6 +171,9 @@ fn mapping_key() -> ProviderClientInstallationKey {
 
 fn assert_body_identity(body: &Value, expected: &str) {
     assert_eq!(body["installation_id"], expected);
+    assert_eq!(body["installationId"], expected);
+    assert_eq!(body["client_metadata"]["installation_id"], expected);
+    assert_eq!(body["client_metadata"]["installationId"], expected);
     assert_eq!(body["client_metadata"]["x-codex-installation-id"], expected);
     assert_eq!(
         serde_json::from_str::<Value>(
@@ -163,6 +184,284 @@ fn assert_body_identity(body: &Value, expected: &str) {
         .unwrap(),
         json!({"installation_id": expected, "future": true}),
     );
+}
+
+fn selected_installation_context(
+    provider: &CodexProvider,
+    request_id: &str,
+    configuration: &OpaqueProviderData,
+    client_key_id: &str,
+    account_id: &str,
+) -> AttemptContext {
+    let profile = provider
+        .resolve_request_profile(Some(configuration), Some(configuration))
+        .expect("resolve key request profile");
+    AttemptContext::new(
+        RequestAttemptContext::new(
+            ModelRequestId::new(request_id).unwrap(),
+            ClientApiKeyId::new(client_key_id).unwrap(),
+        )
+        .with_request_profile(profile),
+        NonZeroU32::MIN,
+        SystemTime::now() + Duration::from_secs(30),
+        account_policy(),
+        AccountAttemptContext::new(
+            BTreeSet::new(),
+            Some(ProviderAccountId::new(account_id).unwrap()),
+            None,
+        )
+        .with_account_scope(contract_account_scope()),
+        None,
+        CancellationToken::new(),
+    )
+}
+
+fn assert_request_identity(headers: &reqwest::header::HeaderMap, body: &Value, expected: &str) {
+    assert_body_identity(body, expected);
+    assert!(!headers.contains_key("x-codex-installation-id"));
+    let metadata = headers
+        .get_all("x-codex-turn-metadata")
+        .iter()
+        .collect::<Vec<_>>();
+    assert_eq!(metadata.len(), 1);
+    assert_eq!(
+        serde_json::from_slice::<Value>(metadata[0].as_bytes()).unwrap(),
+        json!({"installation_id": expected, "future": true}),
+    );
+}
+
+#[tokio::test]
+async fn http_installation_id_is_selected_per_client_key_and_account() {
+    let store = Arc::new(MemoryAccountStore::default());
+    let mut account_installation_ids = BTreeMap::new();
+    for account_id in [ACCOUNT_ID, SECOND_ACCOUNT_ID] {
+        create_account(&store, account_id).await;
+        let credential = store
+            .repository()
+            .load_complete_data(&store.account(account_id).unwrap())
+            .await
+            .unwrap();
+        account_installation_ids.insert(account_id, credential.installation_id().to_owned());
+    }
+    let installations = Arc::new(MemoryClientInstallations::default());
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/codex/responses"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(CAPTURE_COMPLETED_SSE, "text/event-stream"),
+        )
+        .expect(10)
+        .mount(&server)
+        .await;
+    let provider = installation_provider(&store, server.uri(), Arc::clone(&installations));
+    let mut pair_installation_ids = BTreeMap::new();
+    for (index, (client_key_id, account_id, enabled)) in [
+        (CLIENT_KEY_ID, ACCOUNT_ID, true),
+        (CLIENT_KEY_ID, SECOND_ACCOUNT_ID, true),
+        ("key_installation_second", ACCOUNT_ID, true),
+        ("key_installation_second", SECOND_ACCOUNT_ID, true),
+        (CLIENT_KEY_ID, ACCOUNT_ID, true),
+        (CLIENT_KEY_ID, ACCOUNT_ID, false),
+        (CLIENT_KEY_ID, SECOND_ACCOUNT_ID, false),
+        ("key_installation_second", ACCOUNT_ID, false),
+        ("key_installation_second", SECOND_ACCOUNT_ID, false),
+        (CLIENT_KEY_ID, ACCOUNT_ID, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let configuration =
+            independent_configuration(enabled, &wire_profile().snapshot().user_agent());
+        let reads_before = installations.reads.load(Ordering::SeqCst);
+        let inserts_before = installations.inserts.load(Ordering::SeqCst);
+        let mut stream = provider
+            .clone()
+            .execute(
+                planned_request(
+                    "openai",
+                    installation_generate_for_account(false, account_id),
+                ),
+                selected_installation_context(
+                    &provider,
+                    &format!("req_installation_http_pair_{index}"),
+                    &configuration,
+                    client_key_id,
+                    account_id,
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stream.metadata().provider_account_id().as_str(), account_id);
+        while let Some(event) = stream.next().await {
+            event.expect("HTTP response");
+        }
+        let expected = if enabled {
+            let key = ProviderClientInstallationKey::new(
+                ClientApiKeyId::new(client_key_id).unwrap(),
+                ProviderAccountId::new(account_id).unwrap(),
+            );
+            let installation_id = installations.mappings.lock().unwrap()[&key];
+            assert_eq!(installation_id.get_version_num(), 4);
+            let installation_id = installation_id.to_string();
+            assert_ne!(installation_id, account_installation_ids[account_id]);
+            if let Some(previous) =
+                pair_installation_ids.insert((client_key_id, account_id), installation_id.clone())
+            {
+                assert_eq!(installation_id, previous);
+            }
+            installation_id
+        } else {
+            assert_eq!(installations.reads.load(Ordering::SeqCst), reads_before);
+            assert_eq!(installations.inserts.load(Ordering::SeqCst), inserts_before);
+            account_installation_ids[account_id].clone()
+        };
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), index + 1);
+        let request = requests.last().unwrap();
+        assert_request_identity(&request.headers, &captured_request_body(request), &expected);
+    }
+    assert_eq!(pair_installation_ids.len(), 4);
+    assert_eq!(
+        pair_installation_ids
+            .values()
+            .collect::<BTreeSet<_>>()
+            .len(),
+        4
+    );
+    assert_eq!(installations.mappings.lock().unwrap().len(), 4);
+    assert_eq!(installations.reads.load(Ordering::SeqCst), 4);
+    assert_eq!(installations.inserts.load(Ordering::SeqCst), 4);
+}
+
+#[tokio::test]
+async fn websocket_installation_id_is_selected_per_client_key_and_account() {
+    let store = Arc::new(MemoryAccountStore::default());
+    let mut account_installation_ids = BTreeMap::new();
+    for account_id in [ACCOUNT_ID, SECOND_ACCOUNT_ID] {
+        create_account(&store, account_id).await;
+        let credential = store
+            .repository()
+            .load_complete_data(&store.account(account_id).unwrap())
+            .await
+            .unwrap();
+        account_installation_ids.insert(account_id, credential.installation_id().to_owned());
+    }
+    let installations = Arc::new(MemoryClientInstallations::default());
+    let mut pair_installation_ids = BTreeMap::new();
+    for (index, (client_key_id, account_id, enabled)) in [
+        (CLIENT_KEY_ID, ACCOUNT_ID, true),
+        (CLIENT_KEY_ID, SECOND_ACCOUNT_ID, true),
+        ("key_installation_second", ACCOUNT_ID, true),
+        ("key_installation_second", SECOND_ACCOUNT_ID, true),
+        (CLIENT_KEY_ID, ACCOUNT_ID, true),
+        (CLIENT_KEY_ID, ACCOUNT_ID, false),
+        (CLIENT_KEY_ID, SECOND_ACCOUNT_ID, false),
+        ("key_installation_second", ACCOUNT_ID, false),
+        ("key_installation_second", SECOND_ACCOUNT_ID, false),
+        (CLIENT_KEY_ID, ACCOUNT_ID, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut opening = None;
+            let mut websocket =
+                crate::transport::accept_codex_test_websocket_with(socket, |request, _| {
+                    opening = Some(request.headers().clone());
+                })
+                .await;
+            let frame = websocket.next().await.unwrap().unwrap();
+            let body = serde_json::from_str::<Value>(frame.to_text().unwrap()).unwrap();
+            websocket
+                .send(Message::Text(
+                    json!({
+                        "type": "response.completed",
+                        "response": {
+                            "id": format!("resp_installation_pair_{index}"),
+                            "model": "gpt-5.4", "status": "completed", "output": [],
+                        },
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .unwrap();
+            (opening.unwrap(), body)
+        });
+        let provider = installation_provider(&store, base_url, Arc::clone(&installations));
+        let configuration =
+            independent_configuration(enabled, &wire_profile().snapshot().user_agent());
+        let reads_before = installations.reads.load(Ordering::SeqCst);
+        let inserts_before = installations.inserts.load(Ordering::SeqCst);
+        timeout(Duration::from_secs(5), async {
+            let mut stream = provider
+                .clone()
+                .execute(
+                    planned_request(
+                        "openai",
+                        installation_generate_for_account(true, account_id),
+                    ),
+                    selected_installation_context(
+                        &provider,
+                        &format!("req_installation_ws_pair_{index}"),
+                        &configuration,
+                        client_key_id,
+                        account_id,
+                    ),
+                )
+                .await
+                .unwrap();
+            assert_eq!(stream.metadata().provider_account_id().as_str(), account_id);
+            let mut pool = None;
+            while let Some(event) = stream.next().await {
+                if let Some(observation) = event.unwrap().response_observation() {
+                    pool = observation.websocket_pool().or(pool);
+                }
+            }
+            assert_eq!(pool, Some(WebSocketPoolKind::New));
+        })
+        .await
+        .expect("bounded execution on a newly opened WebSocket");
+        let (headers, body) = timeout(Duration::from_secs(5), server)
+            .await
+            .unwrap()
+            .unwrap();
+        let expected = if enabled {
+            let key = ProviderClientInstallationKey::new(
+                ClientApiKeyId::new(client_key_id).unwrap(),
+                ProviderAccountId::new(account_id).unwrap(),
+            );
+            let installation_id = installations.mappings.lock().unwrap()[&key];
+            assert_eq!(installation_id.get_version_num(), 4);
+            let installation_id = installation_id.to_string();
+            assert_ne!(installation_id, account_installation_ids[account_id]);
+            if let Some(previous) =
+                pair_installation_ids.insert((client_key_id, account_id), installation_id.clone())
+            {
+                assert_eq!(installation_id, previous);
+            }
+            installation_id
+        } else {
+            assert_eq!(installations.reads.load(Ordering::SeqCst), reads_before);
+            assert_eq!(installations.inserts.load(Ordering::SeqCst), inserts_before);
+            account_installation_ids[account_id].clone()
+        };
+        assert_request_identity(&headers, &body, &expected);
+    }
+    assert_eq!(pair_installation_ids.len(), 4);
+    assert_eq!(
+        pair_installation_ids
+            .values()
+            .collect::<BTreeSet<_>>()
+            .len(),
+        4
+    );
+    assert_eq!(installations.mappings.lock().unwrap().len(), 4);
+    assert_eq!(installations.reads.load(Ordering::SeqCst), 6);
+    assert_eq!(installations.inserts.load(Ordering::SeqCst), 4);
 }
 
 #[tokio::test]

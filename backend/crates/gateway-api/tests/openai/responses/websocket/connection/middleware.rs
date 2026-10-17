@@ -250,7 +250,7 @@ async fn turns_refresh_host_settings_and_key_identity_while_preserving_handshake
                     json!({
                         "mode": "custom",
                         "userAgent": "codex_cli_rs/0.160.1 (Linux 6.8.0; x86_64) unknown",
-                        "perKeyInstallationId": enabled,
+                        "perKeyInstallationIdEnabled": enabled,
                     })
                     .as_object()
                     .unwrap()
@@ -369,7 +369,7 @@ async fn turns_refresh_host_settings_and_key_identity_while_preserving_handshake
         assert_eq!(observed[1]["runtime"]["max_account_rotations"], 0);
         for (round, enabled) in [(0, false), (1, true), (3, false)] {
             assert_eq!(
-                observed[round]["runtime"]["request_profiles"]["openai"]["perKeyInstallationId"],
+                observed[round]["runtime"]["request_profiles"]["openai"]["perKeyInstallationIdEnabled"],
                 enabled,
                 "each WebSocket execution must use the current key configuration"
             );

@@ -14,7 +14,7 @@ use super::{CodexWireProfile, CodexWireProfileState};
 #[derive(Debug, Clone)]
 pub struct RequestProfileSelection {
     selection: ParsedSelection,
-    per_key_installation_id: Option<bool>,
+    per_key_installation_id_enabled: Option<bool>,
 }
 
 /// 本次执行冻结的 UA 与 Key 配置事实；UA 改写不改变身份选择条件
@@ -25,7 +25,7 @@ pub(crate) struct ResolvedRequestProfile {
     #[serde(default)]
     pub(crate) independent_ua_configuration: bool,
     #[serde(default)]
-    pub(crate) per_key_installation_id: bool,
+    pub(crate) per_key_installation_id_enabled: bool,
 }
 
 impl ResolvedRequestProfile {
@@ -74,14 +74,14 @@ impl RequestProfileSelection {
         }
     }
 
-    pub(crate) fn per_key_installation_id(&self) -> bool {
-        self.per_key_installation_id.unwrap_or(false)
+    pub(crate) fn per_key_installation_id_enabled(&self) -> bool {
+        self.per_key_installation_id_enabled.unwrap_or(false)
     }
 
     pub(crate) fn parse_global(document: &OpaqueProviderData) -> Result<Self, ClientProfileError> {
         if document
             .expose_to_provider()
-            .contains_key("perKeyInstallationId")
+            .contains_key("perKeyInstallationIdEnabled")
         {
             return Err(ClientProfileError::Invalid);
         }
@@ -90,8 +90,8 @@ impl RequestProfileSelection {
 
     pub fn parse(document: &OpaqueProviderData) -> Result<Self, ClientProfileError> {
         let mut fields = document.expose_to_provider().clone();
-        let per_key_installation_id = fields
-            .remove("perKeyInstallationId")
+        let per_key_installation_id_enabled = fields
+            .remove("perKeyInstallationIdEnabled")
             .map(|value| value.as_bool().ok_or(ClientProfileError::Invalid))
             .transpose()?;
         let selection = if !fields.contains_key("mode") {
@@ -115,7 +115,7 @@ impl RequestProfileSelection {
         };
         Ok(Self {
             selection,
-            per_key_installation_id,
+            per_key_installation_id_enabled,
         })
     }
 
@@ -138,12 +138,12 @@ impl RequestProfileSelection {
             ParsedSelection::Custom(identity) => identity.preview(state),
         }?
         .into_inner();
-        if let Some(enabled) = self.per_key_installation_id
+        if let Some(enabled) = self.per_key_installation_id_enabled
             && let Some(configuration) = preview
                 .get_mut("configuration")
                 .and_then(Value::as_object_mut)
         {
-            configuration.insert("perKeyInstallationId".to_owned(), json!(enabled));
+            configuration.insert("perKeyInstallationIdEnabled".to_owned(), json!(enabled));
         }
         Ok(OpaqueProviderData::new(preview))
     }

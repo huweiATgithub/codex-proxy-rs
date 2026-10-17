@@ -157,20 +157,20 @@ fn key_installation_option_is_boolean_and_preserved_by_preview() {
                 .preview_selection(&inherited)
                 .unwrap()
                 .expose_to_provider()["configuration"]
-                .get("perKeyInstallationId")
+                .get("perKeyInstallationIdEnabled")
                 .is_none()
         );
         for enabled in [false, true] {
-            configuration["perKeyInstallationId"] = json!(enabled);
+            configuration["perKeyInstallationIdEnabled"] = json!(enabled);
             let key = document(configuration.clone());
             assert!(RequestProfileSelection::parse(&key).is_ok());
             assert_eq!(
-                state.preview_selection(&key).unwrap().expose_to_provider()["configuration"]["perKeyInstallationId"],
+                state.preview_selection(&key).unwrap().expose_to_provider()["configuration"]["perKeyInstallationIdEnabled"],
                 enabled,
             );
         }
         for invalid in [json!(null), json!("true"), json!(1), json!({})] {
-            configuration["perKeyInstallationId"] = invalid;
+            configuration["perKeyInstallationIdEnabled"] = invalid;
             assert!(RequestProfileSelection::parse(&document(configuration.clone())).is_err());
         }
     }

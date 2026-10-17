@@ -2846,7 +2846,7 @@ async fn installation_option_is_valid_only_for_independent_key_profiles() {
         let configuration = OpaqueProviderData::new(
             json!({
                 "mode":"custom", "userAgent":"codex-tui/0.156.1",
-                "perKeyInstallationId":enabled,
+                "perKeyInstallationIdEnabled":enabled,
             })
             .as_object()
             .unwrap()
@@ -2856,7 +2856,7 @@ async fn installation_option_is_valid_only_for_independent_key_profiles() {
             provider
                 .preview_client_profile(&configuration)
                 .unwrap()
-                .expose_to_provider()["configuration"]["perKeyInstallationId"],
+                .expose_to_provider()["configuration"]["perKeyInstallationIdEnabled"],
             enabled,
         );
         assert!(

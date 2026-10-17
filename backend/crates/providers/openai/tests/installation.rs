@@ -1,4 +1,4 @@
-//! 验证安装身份的启用条件、持久复用、并发初始化与失败取消恢复
+//! 验证 installation id 的启用条件、持久复用、并发初始化与失败取消恢复
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU32;
@@ -165,7 +165,7 @@ fn attempt(key: &str, account: &str, independent: bool, enabled: bool, ua: &str)
     })
     .unwrap();
     profile["independent_ua_configuration"] = independent.into();
-    profile["per_key_installation_id"] = enabled.into();
+    profile["per_key_installation_id_enabled"] = enabled.into();
     AttemptContext::new(
         RequestAttemptContext::new(
             ModelRequestId::new("req_installation").unwrap(),

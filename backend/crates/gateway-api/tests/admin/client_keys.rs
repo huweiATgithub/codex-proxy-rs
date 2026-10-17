@@ -599,7 +599,7 @@ fn installation_option_roundtrips_through_key_creation_editing_and_response() {
     use gateway_core::{account::OpaqueProviderData, routing::ProviderKind};
     let provider = ProviderKind::new("openai").unwrap();
     let profile = json!({
-        "mode":"custom", "userAgent":"codex-tui/0.156.1", "perKeyInstallationId":true,
+        "mode":"custom", "userAgent":"codex-tui/0.156.1", "perKeyInstallationIdEnabled":true,
     });
     let command = serde_json::from_value::<CreateClientKeyRequest>(json!({
         "name":"profile", "groupIds":[], "maxConcurrency":0, "requestsPerMinute":0,

@@ -5816,7 +5816,7 @@ fn key_profile_source_survives_plugin_rewrites_rebase_key_reassignment_and_retri
     let kind = ProviderKind::new("openai").unwrap();
     let document = |selection, enabled| {
         OpaqueProviderData::new(
-            json!({"selection":selection, "perKeyInstallationId":enabled})
+            json!({"selection":selection, "perKeyInstallationIdEnabled":enabled})
                 .as_object()
                 .unwrap()
                 .clone(),

@@ -1,11 +1,11 @@
-//! Client Key 与 Provider 账号配对的持久安装身份合同
+//! Client Key 与 Provider 账号配对的持久 installation id 合同
 
 use super::ProviderStoreError;
 use crate::{account::ProviderAccountId, policy::ClientApiKeyId};
 use futures::future::BoxFuture;
 use uuid::Uuid;
 
-/// 安装身份使用稳定记录 ID，不依赖客户端密钥或请求画像
+/// installation id 使用稳定记录 ID，不依赖客户端密钥或请求画像
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ProviderClientInstallationKey {
     client_api_key_id: ClientApiKeyId,

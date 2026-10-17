@@ -414,8 +414,8 @@ impl Provider for CodexProvider {
         let resolved = ResolvedRequestProfile {
             profile,
             independent_ua_configuration: key_selection.is_some(),
-            per_key_installation_id: key_selection
-                .is_some_and(|selection| selection.per_key_installation_id()),
+            per_key_installation_id_enabled: key_selection
+                .is_some_and(|selection| selection.per_key_installation_id_enabled()),
         };
         crate::transport::profile::selection::object(&resolved)
             .map(Some)

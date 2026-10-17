@@ -35,7 +35,7 @@ const selectedPreset = computed({
     const selected = props.presets.find(({ configuration }) => `${configuration.platform}-${configuration.client}` === value)
     if (selected) {
       customDraft.value = undefined
-      model.value = { ...selected.configuration, perKeyInstallationId: model.value?.perKeyInstallationId, versionMode: selected.automaticAvailable ? 'latest' : 'fixed' }
+      model.value = { ...selected.configuration, perKeyInstallationIdEnabled: model.value?.perKeyInstallationIdEnabled, versionMode: selected.automaticAvailable ? 'latest' : 'fixed' }
     }
   },
 })
@@ -56,14 +56,14 @@ const versionMode = computed({
         return
       if (preset.value)
         presetDraft.value = { ...preset.value }
-      model.value = { ...(customDraft.value ?? { mode: 'custom', userAgent: props.preview!.userAgent }), perKeyInstallationId: model.value?.perKeyInstallationId }
+      model.value = { ...(customDraft.value ?? { mode: 'custom', userAgent: props.preview!.userAgent }), perKeyInstallationIdEnabled: model.value?.perKeyInstallationIdEnabled }
     }
     else {
       if (model.value?.mode === 'custom')
         customDraft.value = { ...model.value }
       const selection = preset.value ?? presetDraft.value ?? props.presets[0]?.configuration
       if (selection) {
-        model.value = { ...selection, perKeyInstallationId: model.value?.perKeyInstallationId, versionMode: 'latest', codexVersion: null, desktopVersion: null, desktopBuild: null }
+        model.value = { ...selection, perKeyInstallationIdEnabled: model.value?.perKeyInstallationIdEnabled, versionMode: 'latest', codexVersion: null, desktopVersion: null, desktopBuild: null }
       }
     }
   },
@@ -105,7 +105,7 @@ const userAgent = computed({
     const recognized = /^(?:Codex Desktop|codex-tui|codex_cli_rs|codex_exec)\/\S+(?:\s|$)/.test(value)
     model.value = {
       mode: 'custom',
-      perKeyInstallationId: model.value?.perKeyInstallationId,
+      perKeyInstallationIdEnabled: model.value?.perKeyInstallationIdEnabled,
       userAgent: value,
       ...(!recognized && previous ? { originator: previous.originator, codexVersion: previous.codexVersion } : {}),
     }

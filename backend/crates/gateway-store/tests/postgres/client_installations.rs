@@ -1,4 +1,4 @@
-//! 验证配对安装 UUID 的升级、跨适配器并发、复用与父记录级联清理
+//! 验证配对 installation id 的升级、跨适配器并发、复用与父记录级联清理
 
 use std::time::Duration;
 

@@ -184,7 +184,7 @@ async fn installation_flags_follow_original_key_settings_across_effective_ua_rew
         OpaqueProviderData::new(
             json!({
                 "mode":"custom", "userAgent":"codex-tui/0.156.1",
-                "perKeyInstallationId":enabled,
+                "perKeyInstallationIdEnabled":enabled,
             })
             .as_object()
             .unwrap()
@@ -212,7 +212,7 @@ async fn installation_flags_follow_original_key_settings_across_effective_ua_rew
                 independent
             );
             assert_eq!(
-                resolved.expose_to_provider()["per_key_installation_id"],
+                resolved.expose_to_provider()["per_key_installation_id_enabled"],
                 enabled
             );
             if effective == Some(&rewritten) {
@@ -232,7 +232,7 @@ async fn installation_flags_follow_original_key_settings_across_effective_ua_rew
         false
     );
     assert_eq!(
-        resolved.expose_to_provider()["per_key_installation_id"],
+        resolved.expose_to_provider()["per_key_installation_id_enabled"],
         false
     );
 }

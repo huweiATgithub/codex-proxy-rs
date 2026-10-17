@@ -708,7 +708,7 @@ async fn key_profile_override_roundtrips_and_explicit_clear_restores_inheritance
             .clone(),
     );
     let mut openai_document = xai_profile.expose_to_provider().clone();
-    openai_document.insert("perKeyInstallationId".to_owned(), true.into());
+    openai_document.insert("perKeyInstallationIdEnabled".to_owned(), true.into());
     let profile = OpaqueProviderData::new(openai_document);
     let id = ClientApiKeyId::new("key_profile").unwrap();
     let openai = gateway_core::routing::ProviderKind::new("openai").unwrap();
