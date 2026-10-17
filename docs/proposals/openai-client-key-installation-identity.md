@@ -18,17 +18,19 @@ to `CODEX_HOME`; scoping it to a client-key/account pair is a proxy-specific cho
 
 ## Configuration and identity
 
-- Offer an off-by-default toggle when a client key explicitly selects an independent UA profile
-- Determine eligibility from the inheritance setting, without comparing UA strings
-- Resolve account identity mode when the key inherits the global profile or the toggle is off
+- Offer an off-by-default toggle for per-key installation IDs when a client key explicitly selects an independent UA profile
+- Determine eligibility from the key's inheritance setting, without comparing UA strings
+- At execution time, enable per-key identity only when the key has an independent OpenAI UA configuration and the toggle is on; otherwise use account identity
 - Persist the option with the key's OpenAI settings and preserve it through editing, preview, and runtime resolution
 - Key each installation mapping by the stable client-key and provider-account record IDs
 - Exclude UA values and key secrets from identity selection
 - Preserve the pair's UUID across UA changes, process restarts, and disabling/re-enabling the toggle
 
 The UI exposes the choice; configuration parsing must also enforce its scope so
-API updates have the same behavior. Returning to global inheritance selects the
-account identity mode.
+API updates have the same behavior.
+
+UA and installation ID are independent request values. Request-time UA rewrites,
+including plugin rewrites, do not affect installation identity selection.
 
 ## Persistence and request flow
 
@@ -85,6 +87,8 @@ current snapshot; an execution already underway keeps its captured settings.
 | Disabled to enabled | Resolve the pair from cache or storage, creating it if absent |
 | Enabled to disabled | Use the account ID and bypass UUID resolution |
 | Disabled to enabled again | Reuse the pair's persisted UUID |
+| Return to global UA inheritance | Delete the key's entire independent OpenAI configuration, including the toggle; use the account ID and retain persisted UUID mappings |
+| Select independent UA configuration again after global inheritance | Start with the toggle off; manually enabling it reuses the pair's persisted UUID |
 | Independent UA changes while enabled | Keep the same pair UUID |
 | Cache eviction or process restart | Reload the persisted UUID |
 
@@ -107,7 +111,8 @@ then-current identity.
 
 ## Implementation acceptance criteria
 
-- Disabled keys bypass UUID cache/store access, including when a pair mapping already exists
+- At execution time, per-key identity requires both independent UA configuration and an enabled toggle; either condition being false bypasses UUID cache/store access, including when a pair mapping already exists
+- Request-time UA rewrites, including plugin rewrites, do not change the identity mode or selected UUID
 - Key edits take effect after normal snapshot refresh without restarting, including subsequent downstream WebSocket executions
 - Different keys and accounts receive distinct, stable UUIDv4 mappings
 - Newly created keys and accounts initialize mappings on first use in per-key mode
@@ -116,6 +121,7 @@ then-current identity.
 - Storage failures and cancelled initialization do not cache an unpersisted UUID or silently change identity mode
 - Request-body and turn-metadata identity agree for HTTP and newly opened upstream WebSocket connections
 - Deleting either parent removes its persisted mappings
-- UI editing and API round trips preserve the option and enforce explicit inheritance semantics
+- UI editing and API round trips preserve the option within independent OpenAI configurations and enforce explicit inheritance semantics
+- Returning to global inheritance deletes the independent OpenAI configuration and toggle; selecting independent configuration again defaults the toggle to off, and manually enabling it reuses the persisted UUID
 
 These are planned implementation checks, not completed test results.
