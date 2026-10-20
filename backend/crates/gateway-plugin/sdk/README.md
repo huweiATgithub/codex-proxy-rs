@@ -121,9 +121,9 @@ SDK 帧读写器自动拆装这些字段，不拼接复制二进制正文。`Mes
 修改宿主合同后，在仓库根目录更新生成文件；Admin 合同测试会检查生成结果是否同步：
 
 ```bash
-CPR_UPDATE_SERVICE_CONTRACT=1 RUST_MIN_STACK=16777216 cargo +1.97.0 test --manifest-path backend/Cargo.toml -p gateway-admin --test main sdk_settings_contract_matches_host_declarations --locked
-CPR_UPDATE_SERVICE_CONTRACT=1 RUST_MIN_STACK=16777216 cargo +1.97.0 test --manifest-path backend/Cargo.toml -p gateway-admin --test main sdk_accounts_contract_matches_host_declarations --locked
-cargo +1.97.0 fmt --all --manifest-path backend/Cargo.toml
+CPR_UPDATE_SERVICE_CONTRACT=1 RUST_MIN_STACK=16777216 cargo +1.99.1 test --manifest-path backend/Cargo.toml -p gateway-admin --test main sdk_settings_contract_matches_host_declarations --locked
+CPR_UPDATE_SERVICE_CONTRACT=1 RUST_MIN_STACK=16777216 cargo +1.99.1 test --manifest-path backend/Cargo.toml -p gateway-admin --test main sdk_accounts_contract_matches_host_declarations --locked
+cargo +1.99.1 fmt --all --manifest-path backend/Cargo.toml
 ```
 
 用量服务合同由 Admin 与 SDK 分别持有，`sdk_wire_types_match_host_contracts` 检查数值、明细、聚合、查询和计价类型一致性；修改合同需同步两侧类型与 [使用说明](docs/usage-data.md)
@@ -131,9 +131,9 @@ cargo +1.97.0 fmt --all --manifest-path backend/Cargo.toml
 SDK 自身的验证命令：
 
 ```bash
-RUST_MIN_STACK=16777216 cargo +1.97.0 test --manifest-path backend/Cargo.toml -p gateway-plugin-sdk --no-default-features --locked
-RUST_MIN_STACK=16777216 cargo +1.97.0 test --manifest-path backend/Cargo.toml -p gateway-plugin-sdk --all-features --locked
-RUST_MIN_STACK=16777216 RUSTDOCFLAGS='-D warnings' cargo +1.97.0 doc --manifest-path backend/Cargo.toml -p gateway-plugin-sdk --all-features --no-deps --locked
+RUST_MIN_STACK=16777216 cargo +1.99.1 test --manifest-path backend/Cargo.toml -p gateway-plugin-sdk --no-default-features --locked
+RUST_MIN_STACK=16777216 cargo +1.99.1 test --manifest-path backend/Cargo.toml -p gateway-plugin-sdk --all-features --locked
+RUST_MIN_STACK=16777216 RUSTDOCFLAGS='-D warnings' cargo +1.99.1 doc --manifest-path backend/Cargo.toml -p gateway-plugin-sdk --all-features --no-deps --locked
 ```
 
 源码中的类型和字段是当前合同；宿主接入、目录边界、内置 Provider 与 Runtime 集成验证见

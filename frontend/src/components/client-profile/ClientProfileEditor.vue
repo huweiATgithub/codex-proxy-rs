@@ -4,7 +4,7 @@ import type {
   ClientProfilePreview,
   ClientProfileSelection,
 } from '@/api/modules/settings/profiles'
-import { ZButton, ZSegmented, ZSwitch } from '@codex-proxy/ui'
+import { ZButton, ZEmpty, ZSegmented, ZSwitch } from '@codex-proxy/ui'
 import { computed, onMounted, shallowRef, watch } from 'vue'
 import { getClientProfileOptions, previewClientProfile } from '@/api/modules/settings/profiles'
 import { errorMessage } from '@/utils/operation'
@@ -23,6 +23,7 @@ const loading = shallowRef(true)
 const loadError = shallowRef('')
 const previewError = shallowRef('')
 const previewing = shallowRef(false)
+const independentDraft = shallowRef<ClientProfileSelection>()
 const effective = computed(() => model.value ?? options.value?.globalConfiguration)
 const inherited = computed(() => props.allowInherit && model.value === null)
 const preset = computed(() => effective.value && !effective.value.mode ? effective.value : undefined)
@@ -35,10 +36,12 @@ const profileSource = computed({
   get: () => model.value === null ? 'global' : 'independent',
   set: (value: string) => {
     if (value === 'global') {
+      if (model.value)
+        independentDraft.value = { ...model.value }
       model.value = null
     }
-    else if (options.value?.globalConfiguration) {
-      model.value = { ...options.value.globalConfiguration, perKeyInstallationIdEnabled: false }
+    else if (independentDraft.value ?? options.value?.globalConfiguration) {
+      model.value = { ...(independentDraft.value ?? options.value!.globalConfiguration), perKeyInstallationIdEnabled: false }
     }
   },
 })
@@ -74,7 +77,7 @@ watch([model, () => props.active], ([configuration, active], _, onCleanup) => {
     return
   const timer = setTimeout(async () => {
     try {
-      const result = await previewClientProfile(configuration)
+      const result = await previewClientProfile({ configuration })
       if (!cancelled)
         preview.value = result
     }
@@ -111,14 +114,15 @@ onMounted(() => load())
       />
       <slot name="source-extra" />
     </div>
-    <div v-if="loadError" role="alert" class="flex flex-wrap items-center justify-between gap-3 text-cp text-cp-error">
-      <span>预设加载失败：{{ loadError }}</span>
-      <ZButton size="small" :disabled="disabled || loading" @click="load()">
-        重试
-      </ZButton>
-    </div>
+    <ZEmpty v-if="loadError" title="预设加载失败" :description="loadError" size="small" surface="none" role="alert">
+      <template #action>
+        <ZButton size="small" :disabled="disabled || loading" @click="load()">
+          重试
+        </ZButton>
+      </template>
+    </ZEmpty>
     <ClientProfilePresetFields
-      v-if="!inherited"
+      v-if="!loadError && !inherited"
       :model-value="effective ?? null"
       :presets="options?.presets ?? []"
       :preview="preview"
@@ -129,7 +133,7 @@ onMounted(() => load())
       :aria-busy="loading || undefined"
       @update:model-value="model = $event"
     />
-    <div v-if="allowInherit && !inherited" class="grid gap-1.5">
+    <div v-if="!loadError && allowInherit && !inherited" class="grid gap-1.5">
       <ZSwitch
         v-model="perKeyInstallationIdEnabled"
         label="独立 installation id"
@@ -141,7 +145,7 @@ onMounted(() => load())
       </p>
     </div>
     <ClientProfilePreviewPanel
-      v-if="inherited || !custom"
+      v-if="!loadError && (inherited || !custom)"
       :preview="preview"
       :previewing="previewing"
       :needs-version-input="!!needsInput"

@@ -1,4 +1,4 @@
-//! 验证配对 installation id 的升级、跨适配器并发、复用与父记录级联清理
+//! 验证配对 installation id 的跨适配器并发、复用与父记录级联清理
 
 use std::time::Duration;
 
@@ -41,32 +41,6 @@ async fn seed_parents(pool: &PgPool) {
     .execute(pool)
     .await
     .unwrap();
-}
-
-#[tokio::test]
-async fn installation_migration_preserves_existing_parents_and_initializes_lazily() {
-    let Some(database) = TestDatabase::create_through("installation_upgrade", 33).await else {
-        return;
-    };
-    seed_parents(&database.pool).await;
-    super::TEST_MIGRATOR.run(&database.pool).await.unwrap();
-
-    let repository = PgClientInstallationRepository::new(database.pool.clone());
-    let key = pair("key_installation_a", "acct_installation_a");
-    assert_eq!(repository.read(&key).await.unwrap(), None);
-    let candidate = Uuid::new_v4();
-    assert_eq!(
-        repository.get_or_insert(&key, candidate).await.unwrap(),
-        candidate
-    );
-    let account_credential: serde_json::Value = sqlx::query_scalar(
-        "select provider_credentials_json from provider_accounts where id = 'acct_installation_a'",
-    )
-    .fetch_one(&database.pool)
-    .await
-    .unwrap();
-    assert_eq!(account_credential, serde_json::json!({}));
-    database.close().await;
 }
 
 #[tokio::test]

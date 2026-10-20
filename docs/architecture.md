@@ -893,6 +893,12 @@ credential 与 quota 是两组独立事实：credential refresh 不等于 quota 
   OpenAI Provider 将其中明确的套餐变更与额度原子提交，共用凭据版本和观察时间保护；
   空值及 `unknown` 不覆盖套餐，同族泛化值保留具体子类型。Token 刷新保留提交时的账号资料
 
+OpenAI Provider 的额度快照统一解释点数可用性，主动查询、耗尽恢复与失败后回读复用同一规则。
+可用点数独立于套餐窗口；通过点数恢复时原子保存新快照、访问事实并清理旧窗口恢复进度。
+无可用点数的失败回读保留已确认的拒绝；常规刷新在到期前仍按窗口证据恢复，本次耗尽之后的
+已记录窗口 reset 全部到期后可依据新的明确放行观察恢复。查询沿用 credential revision 与
+观察时间隔离，不允许旧查询撤销较新的失败；恢复条件和后台复核节奏见 [账号 API](api.md#账号能力导入与-oauth)
+
 OpenAI 订阅周期属于按需个人信息，不是额度事实。Admin 账号用例通过现有 Provider 管理端口并发读取
 个人资料统计与订阅，汇聚为一次只读响应；Provider 继续拥有各自的认证、出站代理与上游协议处理。
 订阅不由 quota、导入或后台任务触发，不持久化。汇聚结果返回前核对账号身份与 credential revision，
@@ -923,6 +929,10 @@ Store 从请求源事实维护窄事实及十五分钟、小时统计状态，�
 完整时间桶在数据库内合并，边界与不能由汇总表达的筛选在数据库内精确聚合；向应用返回的状态按输出分组组织。
 计数、金额与分布状态的旧贡献撤销、新贡献合并和事实替换共用事务，构建期间只调整已扫描前缀，
 不可相减的极值按受影响分组重算。同步账号用量查询在同一快照补齐待投影源版本，读取结果包含尚未完成异步投影的用量。
+空统计分组删除和极值重算在事务内按集合分批执行，避免历史清理产生逐组 SQL 往返。
+请求队列为仍存在的源请求预留部分批量，其余名额按最早入队消费，清理积压期间持续发布新请求统计，同时推进旧贡献撤销。
+统计 Worker 跨周期保留消费批量上限，整轮无进展超时或存储操作超时后缩小批量，满批快速完成时恢复吞吐；
+维护锁竞争造成的空轮不重置批量，未提交事务与未确认队列项由后续周期重试。
 
 ### 额度预测
 
@@ -1002,7 +1012,7 @@ Provider metadata 的 `upstreamServiceTier`，不改写客户端收到的响应�
 Worker 由各 Bundle 贡献、由 Host 统一监督：
 
 - Store：过期请求恢复和 PostgreSQL/Redis 观测队列
-- Host：历史保留任务，持有每小时调度、单轮行数/批数/时长预算、取消和日志；Admin 校验保留窗口，Store 执行有界批量删除
+- Host：历史保留任务，持有每轮结束后一分钟的调度间隔、单轮行数/批数/时长预算、取消和日志；Admin 校验保留窗口，Store 执行有界批量删除
 - Core：`runtime` owner 的 RuntimeSnapshot 周期对账和 Redis change 订阅
 - Admin：S3/R2 备份 daemon，负责调度、执行、删除收敛与保留清理；
   以及账号冻结恢复 worker（容量熔断的自适应并发下调与到期探测解冻）
@@ -1085,6 +1095,13 @@ Admin/API 只转发策略事实，前端分别展示运行版本、通道候选�
 
 ### 数据库恢复
 
+Store 在同一可重复读快照下导出业务表和已发布小时汇总，排除请求、诊断、审计及可重建投影的数据。
+原生全局小时总量转换为 `usage_contribution`，以备份 ID 隔离贡献身份，与插件维护的贡献一同保留；
+恢复后重建原生投影不会删除这些历史基线，新请求继续追加。此归档不改变在线历史清理的统计撤销语义
+
+导出进程、快照事务和压缩文件由同一次任务持有；取消、15 分钟超时或失败会终止子进程并删除部分文件。
+压缩后限额和 SHA-256 覆盖实际上传字节，完整 schema 与迁移记录保留在归档内
+
 PostgreSQL 备份恢复属于人工维护操作。当前没有部署级维护模式开关，需要先停止应用，
 离线处理快照中的非终态任务、计划游标和到期清理条件，再重新验证对象存储并恢复计划。
 关闭计划开关只阻止新计划任务，不会停止 Worker 的任务恢复和删除流程。
@@ -1112,9 +1129,9 @@ PostgreSQL 备份恢复属于人工维护操作。当前没有部署级维护模
 后端验证从 `backend/Cargo.toml` 执行，仓库根目录没有 Cargo manifest：
 
 ```bash
-cargo +1.97.0 fmt --all --manifest-path backend/Cargo.toml -- --check
-RUST_MIN_STACK=16777216 cargo +1.97.0 clippy --manifest-path backend/Cargo.toml --all-targets --all-features --locked -- -D warnings
-RUST_MIN_STACK=16777216 cargo +1.97.0 test --manifest-path backend/Cargo.toml --test main --locked
+cargo +1.99.1 fmt --all --manifest-path backend/Cargo.toml -- --check
+RUST_MIN_STACK=16777216 cargo +1.99.1 clippy --manifest-path backend/Cargo.toml --all-targets --all-features --locked -- -D warnings
+RUST_MIN_STACK=16777216 cargo +1.99.1 test --manifest-path backend/Cargo.toml --test main --locked
 ```
 
 线程栈设置与当前 CI 一致。PostgreSQL/Redis 集成测试需按
