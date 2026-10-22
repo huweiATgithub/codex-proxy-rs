@@ -265,7 +265,8 @@ Codex 的 review 等子代理请求仍使用 `/v1/responses`，并通过 `x-open
 多帧连续解码，整体展开结果受运行设置 `responsesMaxDecompressedBodyBytes` 约束（默认 64 MiB），
 超限在继续展开前返回 `400 request_too_large`，错误信息包含当前请求的上限字节数。zstd
 回溯窗口独立固定为最多 64 MiB，不能满足该限制的帧按解码失败处理。这个限制保护入站解压资源，不是
-模型上下文或 Token 上限；未压缩正文不受此长度限制。
+模型上下文或 Token 上限；未压缩正文不经过此解压检查。插件受管出站仍受同一设置约束，
+见[请求解压上限](#请求解压上限)。
 不支持的编码、逗号分隔的叠加编码和重复 `Content-Encoding` 头返回
 `400 unsupported_content_encoding`；压缩正文损坏、截断或解压后不是合法 JSON 返回
 `400 invalid_json`。本地错误不包含原始正文或解压库细节。WebSocket 文本帧不经过这条解压路径
@@ -292,7 +293,19 @@ Responses 也不透传 `x-stainless-*`、`Origin`、`Referer`、`sec-ch-ua*` 和
 两者同时存在时仍优先使用 `session-id`。正文中的 `client_metadata.session_id`、
 `prompt_cache_key` 不受这条请求头规则影响。
 `thread-id`、turn metadata 等 Codex 协议字段及未知业务扩展不受下游环境头过滤规则影响；
-`traceparent`、`tracestate` 不因属于追踪字段而被删除
+出站移除下游的 `traceparent`、`tracestate` 及 WS metadata 中对应的
+`ws_request_header_traceparent`、`ws_request_header_tracestate`
+
+会话、线程、轮次、窗口及父子引用在出站时按账号安装身份稳定映射为 UUID；
+同账号保留引用关系，换账号使用不同标识。HTTP 请求头、正文 metadata、WS 副本及
+已识别的 Desktop 自动 Git 上下文使用一致映射。
+输入项的 `internal_chat_message_metadata_passthrough.turn_id` 同步映射，
+保留历史轮次与当前轮次的引用关系，其余输入项元数据保持不变。
+Images 的 `x-codex-image-turn-id`、turn metadata 和 Search 的会话 `id` 使用同一账号域；
+Search 只替换该 `id` 的原始字节，其余正文保持不变。
+`prompt_cache_key` 同样按账号映射，保留同账号内的缓存共享关系；未提供时不补造。
+续接 response ID、历史 item/call ID、业务正文和未知扩展不参与映射，
+该处理减少显式追踪标识的跨账号复用，不保证会话内容或业务 metadata 无法关联
 
 #### 正文兼容
 
@@ -774,8 +787,9 @@ OpenAI 主动额度刷新和正常响应携带的明确套餐会同步到账号�
 
 `outboundProxyId` 绑定已保存的代理，不要求出口测试成功；省略或 `null` 保留当前绑定，空字符串清除绑定。
 `outboundProxyUrl` 兼容 HTTP、HTTPS、SOCKS5、SOCKS5H 代理 URL，可带用户名和密码；不能与 ID 同时设置。
-编辑时省略或 `null` 表示保持原配置，空字符串表示清除代理并直连。列表和详情只返回
-不含认证信息的 `outboundProxyEndpoint`（直连时为 `null`）；只有显式敏感导出包含完整 URL。
+编辑时省略或 `null` 表示保持原配置，空字符串表示清除代理并直连。列表和详情返回绑定的
+`outboundProxyId`（未绑定时为 `null`，禁用代理仍保留 ID）和不含认证信息的 `outboundProxyEndpoint`
+（未配置时为 `null`）；只有显式敏感导出包含完整 URL。
 指定代理后，推理、OAuth 服务端交换/刷新及账号辅助请求使用同一出口；代理失败不会退回直连。
 浏览器打开的第三方 OAuth 授权页仍使用浏览器自身网络。
 账号出口与连接隔离见 [架构说明](architecture.md#账号出站代理)
@@ -1559,9 +1573,13 @@ JSON 路径支持 `$`、`.成员`、`["带特殊字符的键"]`、`[索引]`、`
 `$.workspaces.*.associated_remote_urls.*` 配合 `remove_field` 和 `pattern: "private-org"` 只删除命中的远端；
 `$.workspaces` 配合 `rename_key` 可改写工作区路径键名。环境文本替换必须保留 XML 包裹结构
 
-管理端提供「统一工作区信息」预设，生成一条含多个通用步骤的规则。
-预设统一路径中的用户名为 `user`，工作区路径键和环境工作目录保留实际目录名并改为 `/workspace/<项目名>`，
-保留实际仓库、提交、分支、工作区标识和会话关联信息。installation id 由账号隔离逻辑处理，
+管理端提供「统一工作区信息」预设，生成一条含多个步骤的规则，仅处理 turn metadata 的 `workspaces`：
+
+- `/home/<用户名>`、`/Users/<用户名>` 及 Windows 用户目录中的用户名改为 `user`，保留其余目录结构和项目名
+- Git 远端 URL 的账号或组织路径段改为 `alex`，保留协议、主机和仓库名，支持 HTTP(S)、SSH、Git 协议和 `git@host:owner/repo` 形式；多级命名空间及本地远端路径保持原值
+
+提交、分支、工作区标识和会话关联信息保持原值。正文中的工作目录及其他执行路径也保持原值，
+供客户端工具使用，仍可能包含真实用户名和项目名。installation id 由账号隔离逻辑处理，
 UA、平台参数及自动 Git 上下文版本由 [OpenAI 上游客户端身份](#openai-上游客户端身份)管理。
 预设和自定义规则使用同一编辑器，步骤均可增删、修改和排序；调整预设不覆盖已保存的规则
 
@@ -1626,10 +1644,15 @@ Guardian 以 `subagent_kind` 或 `client_metadata.x-openai-subagent` 值 `guardi
 
 ### 请求解压上限
 
-`responsesMaxDecompressedBodyBytes` 是压缩 Responses HTTP 请求的解压输出上限，单位字节，默认
-67108864（64 MiB）。必须为正整数，且可表示为进程平台的 `isize`；管理端以整数 MiB 编辑。
-保存并发布成功后，新请求使用新值；已鉴权请求沿用原快照，无需重启。调高上限会增加大请求的内存占用，
-它不代表整个进程的内存预算
+`responsesMaxDecompressedBodyBytes` 限制压缩 Responses HTTP 请求的解压输出，以及插件受管 HTTP
+的实际出站正文（包括账号上游请求，无论是否压缩），单位字节，默认 67108864（64 MiB）。
+必须为正整数，且可表示为进程平台的 `isize`；管理端以整数 MiB 编辑。
+插件模型调用从同一设置派生内部请求编码预算，具体边界见 [SDK 模型请求](../backend/crates/gateway-plugin/sdk/docs/capabilities.md#key模型与模型调用)
+
+保存并发布成功后，新请求使用新值；在途模型请求及其路由、调度、attempt 和重试回调沿用冻结预算。
+显式 Key 的模型调用沿用当前父调用内绑定的快照，父调用结束后重新绑定时使用新值；无模型请求上下文的
+受管 HTTP 调用读取当前发布值，无需重启插件。调小该值可能使插件上传或转发返回 413，且不发送出站请求。
+调高上限会增加大请求的内存占用，不代表扩大模型 Token 上限、响应缓冲或整个进程的内存预算
 
 ### 智能调度
 
