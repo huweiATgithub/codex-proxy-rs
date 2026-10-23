@@ -1964,7 +1964,7 @@ async fn provider_should_send_the_request_snapshot_location_to_the_upstream() {
         "model": "gpt-5.4",
         "input": [{
             "role": "user",
-            "content": [{"type": "input_text", "text": "<environment_context><timezone>UTC</timezone></environment_context>"}],
+            "content": [{"type": "input_text", "text": "<environment_context><current_date>2026-10-22</current_date><timezone>UTC</timezone></environment_context>"}],
             "internal_chat_message_metadata_passthrough": {
                 "content_item_kinds": ["environments.environment_context"],
                 "create_time": 1789293131.822
@@ -1990,7 +1990,7 @@ async fn provider_should_send_the_request_snapshot_location_to_the_upstream() {
     assert_eq!(
         body.pointer("/input/0/content/0/text"),
         Some(&json!(
-            "<environment_context><timezone>Pacific/Auckland</timezone></environment_context>"
+            "<environment_context><current_date>2026-10-22</current_date><timezone>Pacific/Auckland</timezone></environment_context>"
         ))
     );
     assert_eq!(
@@ -2016,8 +2016,8 @@ async fn provider_should_override_unclassified_time_contexts_over_websocket() {
         }).to_string().into())).await.expect("complete response");
         body
     });
-    let environment = "<environment_context><cwd>/home/example/项目</cwd><timezone>Asia/Shanghai</timezone></environment_context>";
-    let desktop = "<codex_apps_client_time_context><timezone>Asia/Shanghai</timezone></codex_apps_client_time_context>";
+    let environment = "<environment_context><cwd>/home/example/项目</cwd><current_date>2026-10-22</current_date><timezone>Asia/Shanghai</timezone></environment_context>";
+    let desktop = "<codex_apps_client_time_context><timezone>Asia/Shanghai</timezone><current_date>2026-10-21</current_date></codex_apps_client_time_context>";
     let payload = ProtocolPayload::json_object(
         "openai",
         json!({
@@ -4348,6 +4348,7 @@ async fn websocket_midstream_error_frame_surfaces_upstream_message_after_deliver
     create_account(&store, ACCOUNT_ID).await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_url = format!("http://{}", listener.local_addr().unwrap());
+    let (release_error, error_released) = oneshot::channel();
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.expect("accept WebSocket");
         let mut websocket = accept_codex_test_websocket(stream).await;
@@ -4379,7 +4380,9 @@ async fn websocket_midstream_error_frame_surfaces_upstream_message_after_deliver
             ))
             .await
             .expect("send response.in_progress");
-        tokio::time::sleep(Duration::from_millis(1_600)).await;
+        error_released
+            .await
+            .expect("prelude delivered to the client");
         websocket
             .send(Message::Text(
                 json!({
@@ -4408,6 +4411,16 @@ async fn websocket_midstream_error_frame_surfaces_upstream_message_after_deliver
         )
         .await
         .expect("prepare midstream-failure stream");
+    for kind in ["response.created", "response.in_progress"] {
+        let event = timeout(
+            Duration::from_secs(2),
+            precommit::next_client_event(&mut stream),
+        )
+        .await
+        .expect("upstream prelude must reach the client");
+        assert_eq!(event.wire_event().unwrap().event_type(), Some(kind));
+    }
+    release_error.send(()).unwrap();
     let mut failure = loop {
         match stream.next().await {
             Some(Ok(_)) => {}
@@ -5983,7 +5996,6 @@ async fn websocket_opening_account_rejection_keeps_replay_safe_without_transport
         "before-payload rejection is replay safe"
     );
     // 回放安全的账号级拒绝必须把换号决策留给 Core，不得钉死同账号传输重试
-    // （旧行为会携带小时级 retry-after 的同账号重试标记，请求必然超时）
     assert_eq!(error.pre_delivery_retry(), None);
 }
 
@@ -6827,6 +6839,8 @@ async fn missing_affinity_continuation_should_require_client_replay_without_an_u
 
 #[tokio::test]
 async fn missing_affinity_full_request_should_clear_unowned_turn_state() {
+    let trace = gateway_core::diagnostics::TraceContext::new("req_unknown_turn_state");
+    let input = json!((0..520).map(|index| json!({"role":"user", "content":format!("{index}:{}", "private-transcript".repeat(60))})).collect::<Vec<_>>());
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_unknown_turn_state").await;
     let server = MockServer::start().await;
@@ -6845,7 +6859,9 @@ async fn missing_affinity_full_request_should_clear_unowned_turn_state() {
             "openai",
             Map::from_iter([
                 ("model".to_owned(), json!("gpt-5.4")),
-                ("input".to_owned(), json!("full transcript")),
+                ("input".to_owned(), input.clone()),
+                ("instructions".to_owned(), json!("private-instructions")),
+                ("tools".to_owned(), json!([{"type":"function", "name":"private_tool", "parameters":{"type":"object"}}])),
             ]),
         )
         .expect("OpenAI payload")
@@ -6859,7 +6875,21 @@ async fn missing_affinity_full_request_should_clear_unowned_turn_state() {
     let mut stream = provider_with_base_url(&store, server.uri())
         .execute(
             planned_request("openai", Operation::Generate(generation)),
-            context("req_unknown_turn_state", CancellationToken::new()),
+            AttemptContext::new(
+                RequestAttemptContext::new(
+                    ModelRequestId::new("req_unknown_turn_state").unwrap(),
+                    ClientApiKeyId::new("key_openai_contract").unwrap(),
+                )
+                .with_trace(trace.clone())
+                .with_request_location(Some(global_request_location())),
+                NonZeroU32::new(1).unwrap(),
+                SystemTime::now() + Duration::from_secs(30),
+                account_policy(),
+                AccountAttemptContext::new(BTreeSet::<ProviderAccountId>::new(), None, None)
+                    .with_account_scope(contract_account_scope()),
+                None,
+                CancellationToken::new(),
+            ),
         )
         .await
         .expect("prepare full replay stream");
@@ -6872,6 +6902,30 @@ async fn missing_affinity_full_request_should_clear_unowned_turn_state() {
         .expect("captured full replay request");
 
     assert!(captured_header_values(&requests[0], "x-codex-turn-state").is_empty());
+    assert_eq!(captured_request_body(&requests[0])["input"], input);
+    let snapshot = trace.snapshot().unwrap();
+    let events = snapshot["events"].as_array().unwrap();
+    let evidence =
+        |stage: &str| &events.iter().find(|event| event["stage"] == stage).unwrap()["data"];
+    let before = evidence("provider.request.input");
+    let outbound = evidence("provider.request.outbound");
+    assert_eq!(before["input"], outbound["input"]);
+    assert_eq!(before["input"]["omittedItems"], 8);
+    for field in ["instructions", "tools"] {
+        assert_eq!(before["fields"][field], outbound["fields"][field]);
+    }
+    let scope = evidence("provider.request.account_scope");
+    assert_eq!(scope["scope"], "unknown");
+    assert!(scope["before"]["turnState"].is_object());
+    assert!(scope["after"]["turnState"].is_null());
+    for private in [
+        "private-transcript",
+        "private-instructions",
+        "private_tool",
+        "unowned-turn-state",
+    ] {
+        assert!(!snapshot.to_string().contains(private));
+    }
 }
 
 #[tokio::test]

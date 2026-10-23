@@ -1,5 +1,6 @@
 //! OpenAI 管理边界：Provider preparation 与 Redis OAuth pending 适配
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -24,9 +25,10 @@ use gateway_admin::model::provider_credentials::{
     ProviderExportCredentialInput, ProviderModel, ProviderModelCatalogDocument, ProviderModels,
     ProviderProfileActivityInsights, ProviderProfileAvatar, ProviderProfileAvatarStreamError,
     ProviderProfileDailyUsage, ProviderProfileInvocation, ProviderProfileStatistics,
-    ProviderProfileStatisticsSummary, ProviderQuota, ProviderQuotaCredits, ProviderQuotaRequest,
-    ProviderQuotaWindow, ProviderQuotaWindowRole, ProviderResetCredit, ProviderResetCreditResult,
-    ProviderResetCredits, ProviderSubscription, QuotaLocalUsageAttribution,
+    ProviderProfileStatisticsSummary, ProviderQuota, ProviderQuotaCredits,
+    ProviderQuotaReadRequest, ProviderQuotaRequest, ProviderQuotaWindow, ProviderQuotaWindowRole,
+    ProviderResetCredit, ProviderResetCreditResult, ProviderResetCredits, ProviderSubscription,
+    QuotaLocalUsageAttribution,
 };
 use gateway_admin::model::quota_forecast_sampling::QuotaForecastObservation;
 use gateway_admin::ports::provider::{ProviderAdmin, ProviderAdminError, ProviderAdminErrorKind};
@@ -716,7 +718,7 @@ impl ProviderAdmin for OpenAiAdminProvider {
             if refresh {
                 return Err(provider_admin_error(ProviderAdminErrorKind::Unsupported));
             }
-            return Ok(project_quota(None, &account));
+            return Ok(project_quota(None, account.quota().is_exhausted()));
         }
         let snapshot = if refresh {
             let snapshot = Some(
@@ -729,11 +731,81 @@ impl ProviderAdmin for OpenAiAdminProvider {
             snapshot
         } else {
             self.quota
-                .read_account(&account_id)
+                .read_snapshot_for(&account)
                 .await
                 .map_err(map_quota_error)?
         };
-        Ok(project_quota(snapshot, &account))
+        Ok(project_quota(snapshot, account.quota().is_exhausted()))
+    }
+
+    async fn read_quotas(
+        &self,
+        requests: &[ProviderQuotaReadRequest<'_>],
+    ) -> Vec<Result<ProviderQuota, ProviderAdminError>> {
+        let identities = requests
+            .iter()
+            .map(|request| {
+                if request.account.provider_kind != self.provider_kind {
+                    return Err(provider_admin_error(ProviderAdminErrorKind::NotFound));
+                }
+                let id = ProviderAccountId::new(request.account.id.clone())
+                    .map_err(|_| provider_admin_error(ProviderAdminErrorKind::Invalid))?;
+                let revision =
+                    CredentialRevision::new(request.account.credential_revision.get())
+                        .map_err(|_| provider_admin_error(ProviderAdminErrorKind::Invalid))?;
+                Ok((id, revision))
+            })
+            .collect::<Vec<_>>();
+        let ids = requests
+            .iter()
+            .zip(&identities)
+            .filter(|(request, _)| {
+                request.account.authentication_kind
+                    != crate::credential::CODEX_AUTHENTICATION_KIND_API_KEY
+            })
+            .filter_map(|(_, identity)| identity.as_ref().ok().map(|(id, _)| id.clone()))
+            .collect::<Vec<_>>();
+        let observations = if ids.is_empty() {
+            Ok(BTreeMap::new())
+        } else {
+            self.accounts
+                .get_quotas(&ids)
+                .await
+                .map_err(|error| map_quota_error(error.into()))
+                .map(|values| {
+                    values
+                        .into_iter()
+                        .map(|observation| (observation.account_id.clone(), observation))
+                        .collect::<BTreeMap<_, _>>()
+                })
+        };
+        requests
+            .iter()
+            .zip(identities)
+            .map(|(request, identity)| {
+                let (id, revision) = identity?;
+                let snapshot = if request.account.authentication_kind
+                    == crate::credential::CODEX_AUTHENTICATION_KIND_API_KEY
+                {
+                    None
+                } else {
+                    observations
+                        .as_ref()
+                        .map_err(Clone::clone)?
+                        .get(&id)
+                        .map(|observation| {
+                            self.quota.project_observation(&id, revision, observation)
+                        })
+                        .transpose()
+                        .map_err(map_quota_error)?
+                        .flatten()
+                };
+                Ok(project_quota(
+                    snapshot,
+                    request.account.quota.is_exhausted(),
+                ))
+            })
+            .collect()
     }
 
     fn quota_forecast_observation(
@@ -1179,12 +1251,12 @@ fn empty_quota() -> ProviderQuota {
 
 fn project_quota(
     snapshot: Option<CodexAccountQuotaSnapshot>,
-    account: &ProviderAccount,
+    limit_reached: bool,
 ) -> ProviderQuota {
     let mut quota = snapshot
         .map(project_quota_snapshot)
         .unwrap_or_else(empty_quota);
-    quota.limit_reached = account.quota().is_exhausted();
+    quota.limit_reached = limit_reached;
     quota
 }
 
