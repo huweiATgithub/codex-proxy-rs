@@ -43,6 +43,7 @@ mod personal_info {
         let observed = Utc.with_ymd_and_hms(2026, 9, 14, 0, 0, 0).unwrap();
         let response = AccountPersonalInfoData::from((
             AccountPersonalInfo {
+                subscription_observed_at: Some(observed),
                 profile: Err(AdminError::bad_gateway("上游服务请求失败")),
                 subscription: Some(ProviderSubscription {
                     starts_at: None,
@@ -62,13 +63,15 @@ mod personal_info {
             value["subscription"]["expiresAt"],
             "2026-09-14T00:00:00+00:00"
         );
-        assert_eq!(value.as_object().unwrap().len(), 3);
+        assert_eq!(value["subscriptionObservedAt"], "2026-09-14T00:00:00+00:00");
+        assert_eq!(value.as_object().unwrap().len(), 4);
     }
 
     #[test]
     fn personal_info_response_preserves_unknown_subscription_and_profile_error() {
         let response = AccountPersonalInfoData::from((
             AccountPersonalInfo {
+                subscription_observed_at: None,
                 profile: Err(AdminError::unavailable("Provider 服务暂不可用")),
                 subscription: None,
             },
@@ -80,6 +83,7 @@ mod personal_info {
                 "profile": null,
                 "profileError": "Provider 服务暂不可用",
                 "subscription": null,
+                "subscriptionObservedAt": null,
             })
         );
     }

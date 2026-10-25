@@ -37,11 +37,7 @@
       "rollingWindow": "Rolling window",
       "windowConsumption": "Window consumption",
       "resetTime": "Reset time",
-      "localTokens": "Locally accumulated tokens",
       "unavailableHelp": "Upstream quota is unavailable, the green bar does not represent remaining quota",
-      "totalTokensFor": "Total tokens for {windowLabelDisplay}",
-      "usageRateHelp": "Current usage percentage for the most recently used quota",
-      "usageRate": "Usage rate",
       "moreGroups": "{count} more quota groups, expand the account to view them",
       "windows": {
         "fiveHour": "5h limit",
@@ -618,6 +614,31 @@
       "pasteAtLeastOne": "Paste at least one {label}",
       "missingProvider": "The import file contains no {provider} accounts",
       "importFilesMustBeJsonObjects": "Import files must be JSON objects"
+    },
+    "insights": {
+      "expiryUnknown": "Expiry unknown",
+      "refreshSubscription": "Update subscription details",
+      "readSubscription": "Read subscription details",
+      "update": "Update",
+      "read": "Read",
+      "updateFailed": "Update failed",
+      "readFailed": "Read failed",
+      "lowSample": "Limited sample",
+      "incompleteData": "Incomplete data",
+      "costHelp": "Cost details",
+      "partialCost": "Partial cost",
+      "forecast": "Forecast",
+      "forecastHelp": "Forecast details",
+      "resetCredits": "Reset credits",
+      "creditCount": "{count} credit | {count} credits",
+      "earliestExpiry": "Earliest expiry",
+      "notRead": "Not read",
+      "readResetCredits": "Read reset credits",
+      "operationPending": "Awaiting confirmation",
+      "resetTimeHelp": "Reset time: {resetAtDisplay}, remaining time is rounded down to whole hours",
+      "resetRemaining": "Time until next reset: {remaining}",
+      "quotaUsed": "{window}: {usedPercent} used",
+      "accountPageRequired": "Account insights are only available on the accounts page"
     }
   }
 }

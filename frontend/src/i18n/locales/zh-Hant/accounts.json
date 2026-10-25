@@ -37,11 +37,7 @@
       "rollingWindow": "滾動窗口",
       "windowConsumption": "窗口消耗",
       "resetTime": "重置時間",
-      "localTokens": "本地累計總 Token",
       "unavailableHelp": "上游額度未提供，綠色條不表示剩餘額度",
-      "totalTokensFor": "{windowLabelDisplay}總 Token",
-      "usageRateHelp": "最近使用額度的當前已用比例",
-      "usageRate": "使用率",
       "moreGroups": "另有 {count} 個額度組，可展開賬號查看",
       "windows": {
         "fiveHour": "5小時額度",
@@ -618,6 +614,31 @@
       "pasteAtLeastOne": "請至少粘貼一個 {label}",
       "missingProvider": "批量導入文件不包含 {provider} 賬號文檔",
       "importFilesMustBeJsonObjects": "導入文件必須是 JSON 對象"
+    },
+    "insights": {
+      "expiryUnknown": "到期時間未知",
+      "refreshSubscription": "更新訂閱信息",
+      "readSubscription": "讀取訂閱信息",
+      "update": "更新",
+      "read": "讀取",
+      "updateFailed": "更新失敗",
+      "readFailed": "讀取失敗",
+      "lowSample": "樣本較少",
+      "incompleteData": "數據不全",
+      "costHelp": "費用提示",
+      "partialCost": "部分費用",
+      "forecast": "預測",
+      "forecastHelp": "預測提示",
+      "resetCredits": "重置卡",
+      "creditCount": "{count} 張",
+      "earliestExpiry": "最早到期",
+      "notRead": "未讀取",
+      "readResetCredits": "讀取重置卡",
+      "operationPending": "操作待確認",
+      "resetTimeHelp": "重置時間：{resetAtDisplay}，剩餘時長按整小時計",
+      "resetRemaining": "距下次重置 {remaining}",
+      "quotaUsed": "{window} 已用 {usedPercent}",
+      "accountPageRequired": "賬號信息只能在賬號頁面使用"
     }
   }
 }

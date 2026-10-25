@@ -6,7 +6,6 @@ import { useTableColumns, ZCard, ZCheckbox, ZConfirmDialog, ZPageHeader, ZPagina
 import { ChevronDown } from '@lucide/vue'
 import { ref, shallowRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AccountPlanBadge from '@/components/account/AccountPlanBadge.vue'
 import AccountGroupMarks from '@/components/AccountGroupMarks.vue'
 import LastUsedAtCell from '@/components/LastUsedAtCell.vue'
 import ProviderIconGroup from '@/components/ProviderIconGroup.vue'
@@ -29,6 +28,7 @@ import { useAccountBatchEditor } from './composables/useAccountBatchEditor'
 import { useAccountConnectionTest } from './composables/useAccountConnectionTest'
 import { useAccountEditor } from './composables/useAccountEditor'
 import { useAccountImportTasks } from './composables/useAccountImportTasks'
+import { provideAccountInsights } from './composables/useAccountInsights'
 import { useAccountMutations } from './composables/useAccountMutations'
 import { useAccountsQuery } from './composables/useAccountsQuery'
 import { useAccountsTable } from './composables/useAccountsTable'
@@ -62,6 +62,8 @@ const {
   handlePageSizeChange,
   handleSortChange,
 } = useAccountsQuery()
+
+provideAccountInsights(accounts)
 
 const {
   groups,
@@ -292,7 +294,7 @@ const {
             </template>
 
             <template #identity="{ row }">
-              <AccountIdentityCell :account="row" show-notes />
+              <AccountIdentityCell :account="row" show-notes show-plan show-subscription meta-size="xs" />
             </template>
 
             <template #provider="{ row }">
@@ -313,12 +315,6 @@ const {
                 :next-refresh-at="row.nextRefreshAt"
                 :next-refresh-at-display="row.nextRefreshAtDisplay"
               />
-            </template>
-
-            <template #planType="{ row }">
-              <div class="flex min-w-0 justify-center">
-                <AccountPlanBadge :authentication-kind="row.authenticationKind" :plan-type="row.planType" :plan-type-display="row.planTypeDisplay" />
-              </div>
             </template>
 
             <template #usage="{ row }">

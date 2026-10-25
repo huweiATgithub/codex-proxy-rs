@@ -13,6 +13,7 @@ import AccountQuotaWindowGroup from './WindowGroup.vue'
 
 const props = withDefaults(defineProps<{
   label: string | null
+  summaryLabel?: string
   windows: AccountQuotaWindow[]
   showPercentage?: boolean
 }>(), {
@@ -23,7 +24,7 @@ const { t } = useI18n({ useScope: 'global' })
 
 const detailHeading = computed(() => props.label)
 const detailTitle = computed(() => detailHeading.value ?? (props.windows[0] ? quotaWindowLabel(props.windows[0]) : t('accounts.quota.quotaDetails')))
-const summaryLabel = computed(() => props.label ?? (props.windows[0] ? quotaWindowLabel(props.windows[0]) : t('usage.quota')))
+const summaryLabel = computed(() => props.summaryLabel ?? props.label ?? (props.windows[0] ? quotaWindowLabel(props.windows[0]) : t('usage.quota')))
 const hasQuotaWindow = computed(() => props.windows.some(window => typeof window.usedPercent === 'number'))
 const detailItems = computed(() =>
   props.windows.map((window) => {
