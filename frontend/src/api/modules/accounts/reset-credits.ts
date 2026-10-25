@@ -12,6 +12,7 @@ export interface AccountResetCredit {
 }
 
 export interface AccountResetCreditsResponse {
+  observedAt: string
   availableCount: number
   credits: AccountResetCredit[]
 }

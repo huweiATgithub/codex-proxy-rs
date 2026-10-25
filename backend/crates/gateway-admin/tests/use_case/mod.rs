@@ -508,6 +508,31 @@ impl AccountStore for UnavailableStore {
         Err(unavailable("account"))
     }
 
+    async fn prune_orphan_account_insights(&self) -> AdminStoreResult<()> {
+        Err(unavailable("account insights cleanup"))
+    }
+
+    async fn load_account_insights(
+        &self,
+        _: &[gateway_admin::model::accounts::AccountRecord],
+    ) -> AdminStoreResult<
+        std::collections::BTreeMap<
+            String,
+            gateway_admin::model::provider_credentials::AccountInsights,
+        >,
+    > {
+        Err(unavailable("account insights"))
+    }
+
+    async fn observe_account_insight(
+        &self,
+        _: &gateway_admin::model::accounts::AccountRecord,
+        _: chrono::DateTime<chrono::Utc>,
+        _: &gateway_admin::model::provider_credentials::AccountInsightObservation,
+    ) -> AdminStoreResult<bool> {
+        Err(unavailable("account insights"))
+    }
+
     async fn list_plugin_accounts(
         &self,
         _: gateway_admin::model::provider_credentials::PluginAccountListQuery,
