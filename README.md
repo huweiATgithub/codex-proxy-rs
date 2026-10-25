@@ -32,7 +32,7 @@
 在已安装 Docker Engine、Docker Compose Plugin、curl 和 OpenSSL 的 Linux amd64/arm64 主机上运行
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zyycn/codex-proxy-rs/main/deploy/install.sh -o install.sh && bash install.sh
+curl -fsSL https://raw.githubusercontent.com/huweiATgithub/codex-proxy-rs/patches/v3.54.1/deploy/install.sh -o install.sh && bash install.sh
 ```
 
 [安装脚本选项](deploy/README.md#安装脚本选项) · [macOS 发行包](https://github.com/zyycn/codex-proxy-rs/releases) · [Windows 安装](deploy/README.md#windows-二进制部署) · [已有部署升级](deploy/README.md#镜像升级与源码构建)
