@@ -40,8 +40,6 @@
       "resetTime": "Reset time",
       "localTokens": "Locally accumulated tokens",
       "totalTokensFor": "Total tokens for {windowLabelDisplay}",
-      "usageRateHelp": "Current usage percentage for the most recently used quota",
-      "usageRate": "Usage rate",
       "moreGroups": "{count} more quota groups, expand the account to view them",
       "windows": {
         "fiveHour": "5h limit",
@@ -54,7 +52,8 @@
         "days": "{duration} d limit",
         "hours": "{duration} h limit",
         "minutes": "{duration} min limit"
-      }
+      },
+      "unavailableHelp": "Upstream quota is unavailable, the green bar does not represent remaining quota"
     },
     "account": "Account",
     "connectionTest": {
@@ -650,6 +649,31 @@
       "morePlans": "View {count} more plans",
       "nodeQuota": "Node quota",
       "quota": "Upstream quota"
+    },
+    "insights": {
+      "expiryUnknown": "Expiry unknown",
+      "refreshSubscription": "Update subscription details",
+      "readSubscription": "Read subscription details",
+      "update": "Update",
+      "read": "Read",
+      "updateFailed": "Update failed",
+      "readFailed": "Read failed",
+      "lowSample": "Limited sample",
+      "incompleteData": "Incomplete data",
+      "costHelp": "Cost details",
+      "partialCost": "Partial cost",
+      "forecast": "Forecast",
+      "forecastHelp": "Forecast details",
+      "resetCredits": "Reset credits",
+      "creditCount": "{count} credit | {count} credits",
+      "earliestExpiry": "Earliest expiry",
+      "notRead": "Not read",
+      "readResetCredits": "Read reset credits",
+      "operationPending": "Awaiting confirmation",
+      "resetTimeHelp": "Reset time: {resetAtDisplay}, remaining time is rounded down to whole hours",
+      "resetRemaining": "Time until next reset: {remaining}",
+      "quotaUsed": "{window}: {usedPercent} used",
+      "accountPageRequired": "Account insights are only available on the accounts page"
     }
   }
 }

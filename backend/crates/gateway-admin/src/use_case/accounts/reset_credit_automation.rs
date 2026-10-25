@@ -14,22 +14,38 @@ impl DefaultAccountsService {
         context: &MutationContext,
         account_id: ProviderAccountId,
     ) -> Result<ProviderResetCredits, AdminError> {
-        let (_, provider) = self.provider_for_account(&account_id).await?;
-        match provider.reset_credits(&account_id).await {
-            Ok(credits) => Ok(credits),
+        let (mut stored, provider) = self.provider_for_account(&account_id).await?;
+        let observed_at = Utc::now();
+        let mut credits = match provider.reset_credits(&account_id).await {
+            Ok(credits) => credits,
             Err(error)
                 if error.kind()
                     == crate::ports::provider::ProviderAdminErrorKind::CredentialRefreshRequired =>
             {
                 self.refresh(context, account_id.clone()).await?;
-                let (_, provider) = self.provider_for_account(&account_id).await?;
+                let (current, provider) = self.provider_for_account(&account_id).await?;
+                stored = current;
                 provider
                     .reset_credits(&account_id)
                     .await
-                    .map_err(map_reset_credits_error_after_refresh)
+                    .map_err(map_reset_credits_error_after_refresh)?
             }
-            Err(error) => Err(map_provider_error(error, "provider reset credits")),
+            Err(error) => return Err(map_provider_error(error, "provider reset credits")),
+        };
+        credits.observed_at = observed_at;
+        if !self
+            .accounts
+            .observe_account_insight(
+                &stored.account,
+                observed_at,
+                &AccountInsightObservation::ResetCredits(Some(credits.clone())),
+            )
+            .await
+            .map_err(|error| map_store_error(error, "reset-credit observation"))?
+        {
+            return Err(AdminError::conflict("账号或重置卡状态已变化，请重新查询"));
         }
+        Ok(credits)
     }
 
     pub(super) async fn consume_reset_credit_upstream(
@@ -38,7 +54,20 @@ impl DefaultAccountsService {
         command: ConsumeProviderResetCredit,
     ) -> Result<ProviderResetCreditResult, AdminError> {
         let account_id = command.account_id.clone();
-        let (_, provider) = self.provider_for_account(&account_id).await?;
+        let (stored, provider) = self.provider_for_account(&account_id).await?;
+        // 手动与自动消费共用发送边界，取消等待或结果未知也不能留下旧库存
+        if !self
+            .accounts
+            .observe_account_insight(
+                &stored.account,
+                Utc::now(),
+                &AccountInsightObservation::ResetCredits(None),
+            )
+            .await
+            .map_err(|error| map_store_error(error, "invalidate reset credits"))?
+        {
+            return Err(AdminError::conflict("账号或重置卡状态已变化，请重新查询"));
+        }
         match provider.consume_reset_credit(command.clone()).await {
             Ok(result) => Ok(result),
             Err(error)

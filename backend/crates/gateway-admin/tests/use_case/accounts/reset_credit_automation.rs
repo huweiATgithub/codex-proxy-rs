@@ -277,6 +277,26 @@ async fn automation_restores_pending_idempotency_after_service_restart() {
         .reconcile_reset_credit_automation(account_id.clone())
         .await
         .expect_err("unknown consume result");
+    let account = store.accounts.lock().unwrap()[0].clone();
+    let saved = store
+        .load_account_insights(std::slice::from_ref(&account))
+        .await
+        .unwrap()
+        .remove(&account.id)
+        .unwrap();
+    assert!(saved.reset_credits.unwrap().value.is_none());
+    let calls = recorded(&events);
+    assert!(
+        calls
+            .iter()
+            .position(|call| *call == "store.invalidate_reset_credits")
+            .unwrap()
+            < calls
+                .iter()
+                .position(|call| *call == "provider.consume_reset_credit")
+                .unwrap()
+    );
+    assert!(!calls.contains(&"store.prune_orphan_account_insights"));
     let persisted = store
         .reset_credit_automation("acct_test")
         .await
@@ -556,6 +576,25 @@ async fn automation_daily_discovery_is_not_polled_again_after_success_or_failure
         }
         let store = FakeAccountStore::new("openai", events.clone());
         let mut record = plan(Utc::now() + TimeDelta::days(3));
+        provider
+            .reset_credits
+            .lock()
+            .unwrap()
+            .push(card(Utc::now() + TimeDelta::days(3)));
+        let account = store.accounts.lock().unwrap()[0].clone();
+        let previous = ProviderResetCredits {
+            observed_at: Utc::now() - TimeDelta::days(1),
+            available_count: 2,
+            credits: vec![],
+        };
+        store
+            .observe_account_insight(
+                &account,
+                previous.observed_at,
+                &AccountInsightObservation::ResetCredits(Some(previous.clone())),
+            )
+            .await
+            .unwrap();
         record.state.credits.clear();
         record.state.next_discovery_at = Utc::now() - TimeDelta::seconds(1);
         store
@@ -570,6 +609,24 @@ async fn automation_daily_discovery_is_not_polled_again_after_success_or_failure
             .reconcile_reset_credit_automation(id.clone())
             .await;
         assert_eq!(first.is_err(), failed);
+        let saved = store
+            .load_account_insights(std::slice::from_ref(&account))
+            .await
+            .unwrap()
+            .remove(&account.id)
+            .unwrap()
+            .reset_credits
+            .unwrap()
+            .value
+            .unwrap();
+        if failed {
+            assert_eq!(saved, previous);
+        } else {
+            assert_eq!(saved.available_count, 1);
+            assert_eq!(saved.credits, *provider.reset_credits.lock().unwrap());
+            assert!(saved.observed_at > previous.observed_at);
+        }
+        assert!(!recorded(&events).contains(&"store.prune_orphan_account_insights"));
         let scheduled = store
             .reset_credit_automation("acct_test")
             .await
@@ -694,6 +751,7 @@ async fn disabled_automation_only_blocks_manual_consume_until_pending_credit_exp
         .await
         .expect_err("unresolved automation is still active");
     assert!(provider.reset_credit_commands().is_empty());
+    assert!(store.insights.lock().unwrap().is_empty());
     record.state.pending.as_mut().unwrap().credit.expires_at = Utc::now() - TimeDelta::seconds(1);
     store
         .automations

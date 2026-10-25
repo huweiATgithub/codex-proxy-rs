@@ -20,11 +20,9 @@ const props = defineProps<{ account: Account }>()
 const { t } = useI18n({ useScope: 'global' })
 
 const open = defineModel<boolean>({ required: true })
-const accountId = toRef(() => props.account.id)
 const { profile, subscription, loading, error, load } = useAccountPersonalInfo({
-  accountId,
+  account: toRef(() => props.account),
   open,
-  capabilities: toRef(() => props.account.capabilities),
 })
 </script>
 
@@ -66,7 +64,7 @@ const { profile, subscription, loading, error, load } = useAccountPersonalInfo({
       <ZButton @click="open = false">
         {{ t('common.actions.close') }}
       </ZButton>
-      <ZButton :aria-busy="loading" :aria-disabled="loading" @click="load">
+      <ZButton :aria-busy="loading" :disabled="loading" @click="load">
         <template #icon>
           <RefreshCw class="size-4" :class="loading ? 'animate-spin motion-reduce:animate-none' : undefined" />
         </template>

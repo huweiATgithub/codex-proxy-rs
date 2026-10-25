@@ -53,17 +53,10 @@ export const accountColumns = computed(() => (defineTableColumns<Account>([
     sortable: true,
   },
   {
-    key: 'planType',
-    label: t('accounts.profile.subscription.label'),
-    kind: 'status',
-    size: 'sm',
-    sortable: true,
-  },
-  {
     key: 'usage',
     label: t('usage.usage'),
     kind: 'custom',
-    size: '2xl',
+    size: '3xl',
     sortable: true,
   },
   {
