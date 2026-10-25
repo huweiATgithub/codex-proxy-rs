@@ -375,6 +375,7 @@ export const themeDashboardSummary = computed<DashboardSummaryResponse>(() => ({
         usedPercent: 32,
         usedPercentDisplay: '32%',
         limitReached: false,
+        resetAt: null,
         resetAtDisplay: '—',
       },
       lastUsed: t('appearance.preview.components.justNow'),
@@ -419,6 +420,7 @@ export const themeDashboardSummary = computed<DashboardSummaryResponse>(() => ({
         usedPercent: null,
         usedPercentDisplay: '—',
         limitReached: false,
+        resetAt: null,
         resetAtDisplay: '—',
         localUsage: {
           requestCount: 894,
@@ -468,6 +470,7 @@ export const themeDashboardSummary = computed<DashboardSummaryResponse>(() => ({
         usedPercent: 68,
         usedPercentDisplay: '68%',
         limitReached: false,
+        resetAt: null,
         resetAtDisplay: '—',
       },
       lastUsed: t('common.time.minutesAgo', { count: 8 }),
