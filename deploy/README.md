@@ -243,11 +243,11 @@ flowchart LR
 mkdir -p codex-proxy-rs/deploy && cd codex-proxy-rs
 
 # 只解析一次最新正式版本，确保两个文件来自同一 Release。
-CPR_RELEASE_URL="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/zyycn/codex-proxy-rs/releases/latest)"
+CPR_RELEASE_URL="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/huweiATgithub/codex-proxy-rs/releases/latest)"
 CPR_RELEASE_TAG="${CPR_RELEASE_URL##*/}"
-curl -fsSL "https://github.com/zyycn/codex-proxy-rs/releases/download/${CPR_RELEASE_TAG}/compose.yaml" \
+curl -fsSL "https://github.com/huweiATgithub/codex-proxy-rs/releases/download/${CPR_RELEASE_TAG}/compose.yaml" \
   -o deploy/compose.yaml
-curl -fsSL "https://github.com/zyycn/codex-proxy-rs/releases/download/${CPR_RELEASE_TAG}/config.example.yaml" \
+curl -fsSL "https://github.com/huweiATgithub/codex-proxy-rs/releases/download/${CPR_RELEASE_TAG}/config.example.yaml" \
   -o deploy/config.example.yaml
 
 install -d -m 0750 .runtime/postgres .runtime/redis
@@ -318,7 +318,7 @@ store:
 发行包提供 Windows x64（`windows_amd64`）和 ARM64（`windows_arm64`）版本，按运行机器的 CPU 架构选择。
 需先准备可访问的 PostgreSQL 和 Redis，创建数据库及用户；使用数据库备份功能时，还需将匹配服务端版本的 `pg_dump` 加入 `PATH`
 
-从 [Release 附件](https://github.com/zyycn/codex-proxy-rs/releases) 下载对应的
+从 [Release 附件](https://github.com/huweiATgithub/codex-proxy-rs/releases) 下载对应的
 `codex-proxy-rs_<version>_windows_<arch>.tar.gz`，解压后保留 `codex-proxy-rs.exe`、`web/dist`、`deploy` 和 `plugins/official` 的目录关系。
 在解压后的 `codex-proxy-rs` 目录中打开 PowerShell，首次安装时创建配置：
 
@@ -918,7 +918,7 @@ YAML 中显式配置的值优先于对应环境变量
 
 Compose 提供以下在线更新运行参数：
 
-- `CPR_UPDATE_REPOSITORY`：只接受 `owner/repository`；默认 `zyycn/codex-proxy-rs`
+- `CPR_UPDATE_REPOSITORY`：只接受 `owner/repository`；默认 `huweiATgithub/codex-proxy-rs`
 - `CPR_GITHUB_API_BASE`：正式环境必须为 `https://api.github.com/repos`
 - `CPR_UPDATE_EXE_PATH`、`CPR_WEB_DIST_DIR`：分别指向容器内二进制和前端静态目录；
   `CPR_WEB_DIST_DIR` 同时供页面服务与更新器使用，相对路径以 `deploy/config.yaml` 所在目录为基准
