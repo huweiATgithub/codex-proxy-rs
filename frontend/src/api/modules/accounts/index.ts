@@ -101,6 +101,8 @@ export type {
   AccountCapabilities,
   AccountCurrencyCost,
   AccountErrorReason,
+  AccountInsights,
+  AccountInsightSnapshot,
   AccountModelAccess,
   AccountModelUsage,
   AccountProtectionRule,

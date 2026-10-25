@@ -27,12 +27,12 @@ use crate::{
         },
         observability::TimeRange,
         provider_credentials::{
-            AccountDirectoryItem, AccountDirectoryPage, AccountExportBundle, AccountPersonalInfo,
-            AccountRefreshResult, AccountUsagePeriod, ConsumeProviderResetCredit,
-            PrepareCredentialRefresh, ProviderModelCatalogDocument, ProviderModels,
-            ProviderProfileAvatar, ProviderQuota, ProviderQuotaReadRequest, ProviderQuotaRequest,
-            ProviderQuotaWindow, ProviderResetCreditResult, ProviderResetCredits,
-            QuotaLocalUsageAttribution,
+            AccountDirectoryItem, AccountDirectoryPage, AccountExportBundle,
+            AccountInsightObservation, AccountPersonalInfo, AccountRefreshResult,
+            AccountUsagePeriod, ConsumeProviderResetCredit, PrepareCredentialRefresh,
+            ProviderModelCatalogDocument, ProviderModels, ProviderProfileAvatar, ProviderQuota,
+            ProviderQuotaReadRequest, ProviderQuotaRequest, ProviderQuotaWindow,
+            ProviderResetCreditResult, ProviderResetCredits, QuotaLocalUsageAttribution,
         },
         quota_forecast::{
             AccountQuotaForecastReport, account_quota_forecasts, quota_forecast_source_window,
@@ -315,6 +315,13 @@ impl DefaultAccountsService {
         quotas
     }
 
+    async fn prune_orphan_account_insights(&self) {
+        // 按需查询回收孤儿观测；失败留待下次，不阻断上游信息读取
+        if let Err(error) = self.accounts.prune_orphan_account_insights().await {
+            tracing::warn!(error = %error, "orphan account insights cleanup failed");
+        }
+    }
+
     async fn load_account(
         &self,
         account_id: &ProviderAccountId,
@@ -502,8 +509,16 @@ impl DefaultAccountsService {
                     .usage_window()
                     .and_then(|(window, _)| window.local_usage.clone())
             });
+        let insights = self
+            .accounts
+            .load_account_insights(std::slice::from_ref(&stored.account))
+            .await
+            .map_err(|error| map_store_error(error, "account insights"))?
+            .remove(&stored.account.id)
+            .unwrap_or_default();
         Ok(AccountDirectoryItem {
             protection_rules: stored.protection_rules,
+            insights,
             capacity: stored.capacity,
             capabilities: provider
                 .account_capabilities(account_id, &stored.account.authentication_kind),
@@ -594,6 +609,16 @@ impl AccountsService for DefaultAccountsService {
         self.attach_quota_local_usage(&page.items, &mut quotas)
             .await?;
         let mut api_key_usage = self.load_api_key_usage(&page.items, &quotas).await?;
+        let insight_accounts = page
+            .items
+            .iter()
+            .map(|item| item.account.clone())
+            .collect::<Vec<_>>();
+        let mut insights = self
+            .accounts
+            .load_account_insights(&insight_accounts)
+            .await
+            .map_err(|error| map_store_error(error, "account insights"))?;
         let items = page
             .items
             .into_iter()
@@ -614,6 +639,7 @@ impl AccountsService for DefaultAccountsService {
                 });
                 Ok(AccountDirectoryItem {
                     protection_rules: item.protection_rules,
+                    insights: insights.remove(&item.account.id).unwrap_or_default(),
                     capacity: crate::model::accounts::AccountCapacity {
                         used_slots: in_flight
                             .as_ref()
@@ -988,7 +1014,9 @@ impl AccountsService for DefaultAccountsService {
         &self,
         account_id: &ProviderAccountId,
     ) -> Result<AccountPersonalInfo, AdminError> {
+        self.prune_orphan_account_insights().await;
         let (initial, provider) = self.provider_for_account(account_id).await?;
+        let observed_at = Utc::now();
         // 两项读取相互独立；不因其中一项失败而取消另一项，也不触发凭据或额度刷新
         let (profile, subscription) = futures::join!(
             provider.profile_statistics(account_id),
@@ -996,23 +1024,47 @@ impl AccountsService for DefaultAccountsService {
         );
         let profile =
             profile.map_err(|error| map_provider_error(error, "provider profile statistics"));
-        let subscription = subscription
-            .map_err(|error| map_provider_error(error, "provider subscription"))
-            .ok()
-            .flatten();
-
         // 汇聚等待期间发生重新授权、换绑或删除时，不返回混合身份的数据
         let current = self.load_account(account_id).await?;
         if current.account.provider_kind != initial.account.provider_kind
+            || current.account.created_at != initial.account.created_at
             || current.account.credential_revision != initial.account.credential_revision
             || current.account.upstream_user_id != initial.account.upstream_user_id
             || current.account.upstream_account_id != initial.account.upstream_account_id
         {
             return Err(AdminError::conflict("账号身份已变化，请刷新信息后重试"));
         }
+        let (subscription, subscription_observed_at) = match subscription {
+            Ok(subscription) => {
+                if !self
+                    .accounts
+                    .observe_account_insight(
+                        &initial.account,
+                        observed_at,
+                        &AccountInsightObservation::Subscription(subscription.clone()),
+                    )
+                    .await
+                    .map_err(|error| map_store_error(error, "subscription observation"))?
+                {
+                    return Err(AdminError::conflict("账号或订阅信息已变化，请重新查询"));
+                }
+                (subscription, Some(observed_at))
+            }
+            Err(_) => self
+                .accounts
+                .load_account_insights(std::slice::from_ref(&current.account))
+                .await
+                .map_err(|error| map_store_error(error, "account insights"))?
+                .remove(&current.account.id)
+                .and_then(|insights| insights.subscription)
+                .map_or((None, None), |snapshot| {
+                    (snapshot.value, Some(snapshot.observed_at))
+                }),
+        };
         Ok(AccountPersonalInfo {
             profile,
             subscription,
+            subscription_observed_at,
         })
     }
 
@@ -1056,6 +1108,7 @@ impl AccountsService for DefaultAccountsService {
         context: &MutationContext,
         account_id: ProviderAccountId,
     ) -> Result<ProviderResetCredits, AdminError> {
+        self.prune_orphan_account_insights().await;
         let lock = self.reset_credit_lock(&account_id).await;
         let _guard = lock.lock().await;
         let credits = self

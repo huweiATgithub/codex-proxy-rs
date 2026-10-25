@@ -1,5 +1,7 @@
 import type { RelativeTimeView } from '../../types/time'
 import type { AccountGroupRef } from '../groups'
+import type { AccountSubscription } from './personal-info'
+import type { AccountResetCreditsResponse } from './reset-credits'
 
 export type AccountStatus
   = 'normal' | 'quota_exhausted' | 'rate_limited' | 'disabled' | 'error'
@@ -28,6 +30,7 @@ export interface AccountQuotaWindow {
   usedPercentDisplay: string
   limitReached: boolean
   localUsage?: unknown
+  resetAt: string | null
   resetAtDisplay: string
 }
 
@@ -138,6 +141,7 @@ export interface AccountModelAccess {
 }
 
 export interface Account {
+  insights: AccountInsights
   upstream: AccountUpstream | null
   capabilities: AccountCapabilities
   outboundProxyId: string | null
@@ -213,4 +217,14 @@ export interface AccountRefreshResponse {
 
 export interface AccountIdParam {
   accountId: string
+}
+
+export interface AccountInsightSnapshot<T> {
+  observedAt: string
+  value: T | null
+}
+
+export interface AccountInsights {
+  subscription: AccountInsightSnapshot<AccountSubscription> | null
+  resetCredits: AccountInsightSnapshot<AccountResetCreditsResponse> | null
 }
