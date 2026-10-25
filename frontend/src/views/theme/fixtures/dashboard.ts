@@ -373,6 +373,7 @@ export const themeDashboardSummary = computed<DashboardSummaryResponse>(() => ({
         usedPercent: 32,
         usedPercentDisplay: '32%',
         limitReached: false,
+        resetAt: null,
         resetAtDisplay: '—',
       },
       lastUsedAt: '2026-08-23T10:30:00+08:00',
@@ -414,6 +415,7 @@ export const themeDashboardSummary = computed<DashboardSummaryResponse>(() => ({
         usedPercent: null,
         usedPercentDisplay: '—',
         limitReached: false,
+        resetAt: null,
         resetAtDisplay: '—',
         localUsage: {
           requestCount: 894,
@@ -460,6 +462,7 @@ export const themeDashboardSummary = computed<DashboardSummaryResponse>(() => ({
         usedPercent: 68,
         usedPercentDisplay: '68%',
         limitReached: false,
+        resetAt: null,
         resetAtDisplay: '—',
       },
       lastUsedAt: '2026-08-23T10:22:00+08:00',
