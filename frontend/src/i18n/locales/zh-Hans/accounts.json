@@ -40,8 +40,6 @@
       "resetTime": "重置时间",
       "localTokens": "本地累计总 Token",
       "totalTokensFor": "{windowLabelDisplay}总 Token",
-      "usageRateHelp": "最近使用额度的当前已用比例",
-      "usageRate": "使用率",
       "moreGroups": "另有 {count} 个额度组，可展开账号查看",
       "windows": {
         "fiveHour": "5小时额度",
@@ -54,7 +52,8 @@
         "days": "{duration}日额度",
         "hours": "{duration}小时额度",
         "minutes": "{duration}分钟额度"
-      }
+      },
+      "unavailableHelp": "上游额度未提供，绿色条不表示剩余额度"
     },
     "account": "账号",
     "connectionTest": {
@@ -646,6 +645,31 @@
       "morePlans": "查看其余 {count} 种套餐",
       "nodeQuota": "节点额度",
       "quota": "上游额度"
+    },
+    "insights": {
+      "expiryUnknown": "到期时间未知",
+      "refreshSubscription": "更新订阅信息",
+      "readSubscription": "读取订阅信息",
+      "update": "更新",
+      "read": "读取",
+      "updateFailed": "更新失败",
+      "readFailed": "读取失败",
+      "lowSample": "样本较少",
+      "incompleteData": "数据不全",
+      "costHelp": "费用提示",
+      "partialCost": "部分费用",
+      "forecast": "预测",
+      "forecastHelp": "预测提示",
+      "resetCredits": "重置卡",
+      "creditCount": "{count} 张",
+      "earliestExpiry": "最早到期",
+      "notRead": "未读取",
+      "readResetCredits": "读取重置卡",
+      "operationPending": "操作待确认",
+      "resetTimeHelp": "重置时间：{resetAtDisplay}，剩余时长按整小时计",
+      "resetRemaining": "距下次重置 {remaining}",
+      "quotaUsed": "{window} 已用 {usedPercent}",
+      "accountPageRequired": "账号信息只能在账号页面使用"
     }
   }
 }

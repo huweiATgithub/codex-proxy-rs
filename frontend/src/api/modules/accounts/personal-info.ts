@@ -63,6 +63,7 @@ export interface AccountProfileStatisticsResponse {
 }
 
 export interface AccountPersonalInfoResponse {
+  subscriptionObservedAt: string | null
   profile: AccountProfileStatisticsResponse | null
   profileError: string | null
   subscription: AccountSubscription | null
