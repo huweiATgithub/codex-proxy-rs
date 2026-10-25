@@ -1,15 +1,18 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
+      - 'patches/**'
     paths-ignore:
       - 'release/version.yaml'
       - 'release/notes.md'
   pull_request:
     branches:
       - main
+      - 'patches/**'
 
 permissions:
   contents: read

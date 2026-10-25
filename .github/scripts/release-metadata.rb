@@ -68,7 +68,8 @@ module ReleaseMetadata
     validate_notes(value)
     entries = platforms
     docker, native = entries.partition { |entry| entry['docker'] == true }
-    previous = git('tag', '--list', 'v*', '--merged', 'HEAD').lines.map(&:strip).filter_map do |candidate|
+    # 补丁在各上游版本上重放，上一发行标签不一定是当前提交的祖先
+    previous = git('tag', '--list', 'v*').lines.map(&:strip).filter_map do |candidate|
       next unless candidate.delete_prefix('v').match?(SEMVER)
       key = sort_key(candidate)
       [key, candidate] if key < sort_key(value)
