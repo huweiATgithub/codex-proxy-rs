@@ -9,6 +9,7 @@ use std::{
 mod admin_adapter;
 mod authorization;
 mod deletion;
+mod insights;
 mod protection_revision;
 mod quota;
 mod quota_forecast;
