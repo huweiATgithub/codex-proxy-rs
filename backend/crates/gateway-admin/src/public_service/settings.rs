@@ -88,5 +88,12 @@ pub(super) fn register(
         &provider,
         configuration.as_ref()
     );
+    register!(
+        RefreshClientProfiles,
+        refresh_client_profiles,
+        String,
+        provider,
+        &provider
+    );
     Ok(())
 }
