@@ -207,26 +207,49 @@ async fn installation_seed_is_optional_and_validated_only_for_key_profiles() {
     }
     let doc =
         |value: serde_json::Value| OpaqueProviderData::new(value.as_object().unwrap().clone());
-    let global = doc(json!({"mode": "custom", "userAgent": "codex-tui/2.0.0"}));
     let key = doc(json!({"inherit":{"installationSeed":id}}));
-    let preview = provider
-        .preview_key_client_profile(&key, Some(&global))
-        .unwrap()
-        .into_inner();
-    assert_eq!(preview["userAgent"], "codex-tui/2.0.0");
-    assert_eq!(
-        preview["configuration"]["installationSeed"],
-        id.to_lowercase()
-    );
-    assert!(provider.preview_client_profile(&key).is_err());
-    assert!(
-        provider
-            .preview_key_client_profile(
-                &doc(json!({"inherit":{"userAgent":"other"}})),
-                Some(&global)
-            )
-            .is_err()
-    );
+    for configuration in [
+        json!({"mode": "custom", "userAgent": "codex-tui/2.0.0"}),
+        json!({"mode":"catalog","versionMode":"latest","entry":{
+            "client":"cli","environment":"linux-ubuntu-x64","release":"0.156.1",
+            "userAgent":"codex-tui/0.156.1 (Ubuntu 24.4.0; x86_64) xterm-256color (codex-tui; 0.156.1)"
+        }}),
+    ] {
+        let global = doc(configuration.clone());
+        let expected = provider.preview_client_profile(&global).unwrap();
+        let preview = provider
+            .preview_key_client_profile(&key, Some(&global))
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            preview["userAgent"],
+            expected.expose_to_provider()["userAgent"]
+        );
+        assert_eq!(
+            preview["configuration"]["installationSeed"],
+            id.to_lowercase()
+        );
+        let mut independent = configuration;
+        independent["installationSeed"] = json!(id);
+        let independent = doc(independent);
+        assert_eq!(
+            provider
+                .preview_key_client_profile(&independent, None)
+                .unwrap()
+                .into_inner(),
+            preview
+        );
+        assert!(provider.preview_client_profile(&independent).is_err());
+        assert!(provider.preview_client_profile(&key).is_err());
+        assert!(
+            provider
+                .preview_key_client_profile(
+                    &doc(json!({"inherit":{"userAgent":"other"}})),
+                    Some(&global)
+                )
+                .is_err()
+        );
+    }
 }
 
 #[tokio::test]
@@ -243,7 +266,7 @@ async fn openai_bundle_exposes_one_core_provider_and_drains_worker_contributions
     assert_eq!(bundle.core_provider().name(), "openai");
     assert_eq!(bundle.admin_provider().provider_kind().as_str(), "openai");
     let contributions = bundle.take_worker_contributions();
-    assert_eq!(contributions.len(), 8);
+    assert_eq!(contributions.len(), 9);
     assert!(
         contributions
             .iter()
@@ -271,6 +294,7 @@ async fn openai_bundle_exposes_one_core_provider_and_drains_worker_contributions
     };
     assert_eq!(schedule.interval(), APPCAST_POLL_INTERVAL);
     for (owner, interval) in [
+        ("openai-ua-catalog", APPCAST_POLL_INTERVAL),
         ("openai-cli-release", APPCAST_POLL_INTERVAL),
         ("openai-platform-desktop-release", APPCAST_POLL_INTERVAL),
         ("openai", Duration::from_secs(30)),

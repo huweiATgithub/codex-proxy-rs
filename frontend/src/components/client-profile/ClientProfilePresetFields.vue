@@ -1,14 +1,12 @@
 <script setup lang="ts">
-import type { ClientProfilePreset, ClientProfilePreview, ClientProfileSelection, CustomClientProfileSelection, PresetClientProfileSelection } from '@/api/modules/settings/profiles'
+import type { ClientProfilePreset, PresetClientProfileSelection } from '@/api/modules/settings/profiles'
 
-import { ZFormItem, ZInput, ZSelect, ZTextarea } from '@codex-proxy/ui'
-import { computed, shallowRef } from 'vue'
+import { ZFormItem, ZInput, ZSelect } from '@codex-proxy/ui'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const props = withDefaults(defineProps<{
   presets: ClientProfilePreset[]
-  preview?: ClientProfilePreview
-  previewing: boolean
   disabled: boolean
   maxVersionLag?: number
 }>(), {
@@ -17,13 +15,8 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n({ useScope: 'global' })
 
-const model = defineModel<ClientProfileSelection | null>({ required: true })
-const presetDraft = shallowRef<PresetClientProfileSelection>()
-const customDraft = shallowRef<CustomClientProfileSelection>()
-const preset = computed(() => model.value && !model.value.mode
-  ? model.value
-  : undefined)
-const custom = computed(() => model.value?.mode === 'custom' || preset.value?.versionMode === 'fixed')
+const model = defineModel<PresetClientProfileSelection | null>({ required: true })
+const preset = computed(() => model.value ?? undefined)
 const platforms = { macos: 'MacOS', linux: 'Linux', windows: 'Windows' }
 const presetOptions = computed(() => props.presets.map(({ configuration }) => ({
   value: `${configuration.platform}-${configuration.client}`,
@@ -36,7 +29,7 @@ const currentPreset = computed(() => props.presets.find(({ configuration }) =>
 ))
 const selectedPreset = computed({
   get: () => {
-    const selection = preset.value ?? presetDraft.value
+    const selection = preset.value
     return selection
       ? `${selection.platform}-${selection.client}`
       : ''
@@ -44,7 +37,6 @@ const selectedPreset = computed({
   set: (value: string) => {
     const selected = props.presets.find(({ configuration }) => `${configuration.platform}-${configuration.client}` === value)
     if (selected) {
-      customDraft.value = undefined
       model.value = {
         ...selected.configuration,
         versionMode: selected.automaticAvailable ? 'latest' : 'fixed',
@@ -56,40 +48,11 @@ const cliEntry = computed({
   get: () => preset.value?.cliEntry ?? 'core',
   set: (value: string) => {
     if (preset.value && (value === 'core' || value === 'tui' || value === 'exec')) {
-      customDraft.value = undefined
       model.value = {
         ...preset.value,
         cliEntry: value === 'core'
           ? null
           : value,
-      }
-    }
-  },
-})
-const versionMode = computed({
-  get: () => custom.value ? 'custom' : 'latest',
-  set: (value: string) => {
-    if (value === 'custom') {
-      if (!props.preview && !customDraft.value)
-        return
-      if (preset.value)
-        presetDraft.value = { ...preset.value }
-      model.value = {
-        ...(customDraft.value ?? { mode: 'custom', userAgent: props.preview!.userAgent }),
-      }
-    }
-    else {
-      if (model.value?.mode === 'custom')
-        customDraft.value = { ...model.value }
-      const selection = preset.value ?? presetDraft.value ?? props.presets[0]?.configuration
-      if (selection) {
-        model.value = {
-          ...selection,
-          versionMode: 'latest',
-          codexVersion: null,
-          desktopVersion: null,
-          desktopBuild: null,
-        }
       }
     }
   },
@@ -141,36 +104,15 @@ const osVersion = computed({
     }
   },
 })
-const userAgent = computed({
-  get: () => model.value?.mode === 'custom'
-    ? model.value.userAgent
-    : props.preview?.userAgent ?? '',
-  set: (value: string) => {
-    const previous = model.value?.mode === 'custom'
-      ? model.value
-      : undefined
-    if (preset.value)
-      presetDraft.value = { ...preset.value }
-    // 已知客户端的配套头重新派生，避免修改版本后继续携带旧值。
-    const recognized = /^(?:Codex Desktop|codex-tui|codex_cli_rs|codex_exec)\/\S+(?:\s|$)/.test(value)
-    model.value = {
-      mode: 'custom',
-      userAgent: value,
-      ...(!recognized && previous
-        ? { originator: previous.originator, codexVersion: previous.codexVersion }
-        : {}),
-    }
-  },
-})
 </script>
 
 <template>
   <div class="grid gap-4">
-    <div class="grid gap-4" :class="preset?.client === 'cli' && !custom ? 'sm:grid-cols-3' : 'sm:grid-cols-2'">
+    <div class="grid gap-4" :class="preset?.client === 'cli' ? 'sm:grid-cols-2' : undefined">
       <ZFormItem :label="t('settings.clientProfile.clientDefault')">
-        <ZSelect v-model="selectedPreset" class="w-full" :options="presetOptions" :placeholder="custom ? t('settings.clientProfile.useCustomUserAgent') : undefined" :disabled="disabled || custom || !presets.length" />
+        <ZSelect v-model="selectedPreset" class="w-full" :options="presetOptions" :disabled="disabled || !presets.length" />
       </ZFormItem>
-      <ZFormItem v-if="preset?.client === 'cli' && !custom" :label="t('settings.clientProfile.cliEntry')">
+      <ZFormItem v-if="preset?.client === 'cli'" :label="t('settings.clientProfile.cliEntry')">
         <ZSelect
           v-model="cliEntry"
           class="w-full"
@@ -182,22 +124,11 @@ const userAgent = computed({
           :disabled="disabled"
         />
       </ZFormItem>
-      <ZFormItem :label="t('settings.clientProfile.versionStrategy')">
-        <ZSelect
-          v-model="versionMode"
-          class="w-full"
-          :options="[
-            { label: t('settings.clientProfile.followLatestVersion'), value: 'latest', disabled: !presets.length },
-            { label: t('settings.clientProfile.customVersion'), value: 'custom', disabled: !custom && (previewing || !preview) },
-          ]"
-          :disabled="disabled"
-        />
-      </ZFormItem>
     </div>
-    <p v-if="!custom && currentPreset?.reason" class="m-0 text-z-sm text-z-text-secondary">
+    <p v-if="currentPreset?.reason" class="m-0 text-z-sm text-z-text-secondary">
       {{ currentPreset.reason }}
     </p>
-    <div v-if="!custom" class="grid gap-4 sm:grid-cols-2">
+    <div class="grid gap-4 sm:grid-cols-2">
       <ZFormItem :label="t('settings.clientProfile.versionLag')" :error="versionLagError">
         <ZInput
           v-model="versionLag"
@@ -238,17 +169,5 @@ const userAgent = computed({
         </ZFormItem>
       </div>
     </div>
-    <template v-if="custom">
-      <ZTextarea
-        v-model="userAgent"
-        :rows="3"
-        :disabled="disabled || (!model?.mode && previewing)"
-        :aria-label="t('settings.clientProfile.userAgent')"
-        :placeholder="t('settings.clientProfile.userAgentPlaceholder')"
-        spellcheck="false"
-        autocomplete="off"
-        class="font-mono"
-      />
-    </template>
   </div>
 </template>
