@@ -28,7 +28,30 @@ export interface CustomClientProfileSelection {
   codexVersion?: string | null
 }
 
-export type ClientProfileSelection = PresetClientProfileSelection | CustomClientProfileSelection
+export interface ClientProfileCatalogEntry {
+  client: 'desktop' | 'cli' | 'exec'
+  environment: string
+  profile?: 'xterm-256color' | 'WindowsTerminal' | 'vscode' | 'herdr'
+  release: string
+  userAgent: string
+}
+
+export interface CatalogClientProfileSelection {
+  mode: 'catalog'
+  versionMode: 'latest' | 'fixed'
+  entry: ClientProfileCatalogEntry
+}
+
+export interface ClientProfileCatalogSource {
+  source: 'desktop' | 'cli'
+  checkedAt: string | null
+  checkedAtDisplay: string | null
+  updatedAt: string | null
+  updatedAtDisplay: string | null
+  error: string | null
+}
+
+export type ClientProfileSelection = PresetClientProfileSelection | CatalogClientProfileSelection | CustomClientProfileSelection
 
 export function isValidInstallationId(value: unknown) {
   return value == null || value === '' || (typeof value === 'string' && value.length === 36 && /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(value))
@@ -38,6 +61,11 @@ export interface ClientProfileOptions {
   presets: ClientProfilePreset[]
   globalConfiguration: ClientProfileSelection
   maxVersionLag: number
+  catalog: {
+    entries: ClientProfileCatalogEntry[]
+    sources: ClientProfileCatalogSource[]
+    releaseLimit: number
+  }
 }
 
 export interface ClientProfilePreview {
@@ -52,7 +80,7 @@ export interface ClientProfilePreview {
   desktopVersion: string | null
   desktopBuild: string | null
   userAgent: string
-  versionSource: 'official' | 'custom'
+  versionSource: 'official' | 'custom' | 'catalog'
   versionLag: number | null
   recognized?: boolean
   verifiedAt: string | null
@@ -86,6 +114,14 @@ export function previewClientProfile(data: ClientProfilePreviewParam) {
     method: 'POST',
     data,
     silent: true,
+  })
+}
+
+export function refreshClientProfileCatalog() {
+  return request<ClientProfileOptions>({
+    url: '/api/admin/settings/client-profiles/openai/refresh',
+    method: 'POST',
+    timeout: 135000,
   })
 }
 

@@ -12,7 +12,6 @@
       "installationIdPlaceholder": "留空使用上游帳號的安裝ID",
       "invalidInstallationId": "請輸入帶連字號的 UUID",
       "clientDefault": "客戶端預設",
-      "useCustomUserAgent": "使用自定義用戶代理",
       "cliEntry": "CLI 入口",
       "coreDefaultIdentity": "Core · 默認身份",
       "tuiInteractiveTerminal": "TUI · 交互式終端",
@@ -45,7 +44,39 @@
       "grokCliVersion": "Grok CLI 版本",
       "forExample": "例如：1.0.13",
       "clientIdentity": "客戶端身份",
-      "description": "配置網關向上遊聲明的客戶端類型、版本與請求頭"
+      "description": "配置網關向上遊聲明的客戶端類型、版本與請求頭",
+      "catalog": {
+        "sourceError": "{source}：{error}",
+        "inheritedIdentity": "使用全局設置中已保存的身份",
+        "followLatest": "跟隨最新收錄",
+        "fixedReleaseIdentity": "固定發布身份",
+        "configurationMode": "客戶端身份配置方式",
+        "presetMode": "版本預設",
+        "catalogMode": "發布列表",
+        "customMode": "自定義",
+        "refresh": "刷新列表",
+        "empty": "暫無發布條目，可刷新列表或填寫自定義用戶代理",
+        "refreshFailed": "刷新失敗，保留上次列表：{error}",
+        "previewAfterUserAgent": "填寫用戶代理後預覽",
+        "customize": "基於此項自定義",
+        "updateFailedUseSavedIdentity": "更新失敗 · 沿用已保存身份",
+        "latestRelease": "{release} · 最新收錄",
+        "savedRelease": "{release} · 已保存條目",
+        "client": "客戶端",
+        "environment": "運行環境",
+        "release": "發布版本",
+        "followLatestAutomatically": "自動跟隨最新收錄",
+        "currentRelease": "當前發布版本",
+        "desktopReleaseHelp": "此處為 Desktop 應用版本，內嵌 Core 版本見下方詳情",
+        "notChecked": "尚未檢查發布列表",
+        "collectedAt": "收錄於 {updatedAtDisplay}"
+      },
+      "custom": {
+        "headersRequired": "未識別配套請求頭，請補充客戶端標識和 Core 版本",
+        "originator": "客戶端標識 originator",
+        "coreVersion": "Core 版本",
+        "coreVersionPlaceholder": "例如 0.158.0"
+      }
     },
     "pricing": {
       "multiplier": "倍率",
