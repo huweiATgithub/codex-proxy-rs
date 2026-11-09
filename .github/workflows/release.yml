@@ -39,8 +39,6 @@ jobs:
       git_sha: ${{ steps.version.outputs.git_sha }}
       platform_matrix: ${{ steps.version.outputs.platform_matrix }}
       docker_matrix: ${{ steps.version.outputs.docker_matrix }}
-      non_docker_matrix: ${{ steps.version.outputs.non_docker_matrix }}
-      windows_matrix: ${{ steps.version.outputs.windows_matrix }}
       docker_platforms: ${{ steps.version.outputs.docker_platforms }}
       previous_tag: ${{ steps.version.outputs.previous_tag }}
       prerelease: ${{ steps.version.outputs.prerelease }}
@@ -87,57 +85,6 @@ jobs:
       ref: ${{ needs.release-info.outputs.git_sha }}
       run_backend: ${{ needs.release-info.outputs.run_backend == 'true' }}
       run_frontend: false
-
-  windows:
-    needs: release-info
-    name: windows-tests (${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.release-info.outputs.windows_matrix) }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
-    env:
-      RUST_MIN_STACK: '16777216'
-      RUSTFLAGS: '-C target-feature=+crt-static'
-      CARGO_PROFILE_DEV_DEBUG: '1'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.release-info.outputs.git_sha }}
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
-        with:
-          toolchain: ${{ needs.release-info.outputs.rust }}
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: backend -> target
-          shared-key: platform-tests-${{ matrix.target }}
-          cache-bin: false
-          save-if: ${{ github.event_name != 'pull_request' }}
-      - name: Setup nextest
-        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
-        with:
-          tool: cargo-nextest@0.9.143
-          fallback: none
-      - name: Verify Windows platform behavior
-        shell: bash
-        working-directory: backend
-        env:
-          BUILD_TARGET: ${{ matrix.target }}
-        # 同一次构建统一两个 package 的依赖特性，保留原有平台用例和静态运行库
-        run: |
-          printf '[profile.ci.junit]\npath = "junit.xml"\n' > "$RUNNER_TEMP/nextest-ci.toml"
-          cargo nextest run --config-file "$RUNNER_TEMP/nextest-ci.toml" --locked --target "$BUILD_TARGET" \
-            -p gateway-admin -p gateway-host --test main --no-tests fail --profile ci \
-            -E '(package(=gateway-admin) & test(/^use_case::plugins::official::/)) | (package(=gateway-host) & test(/^system_update::/))'
-      - name: Upload test report
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: windows-tests-${{ matrix.arch }}
-          path: backend/target/nextest/ci/junit.xml
-          if-no-files-found: ignore
-          retention-days: 7
 
   security:
     needs: release-info
@@ -202,44 +149,8 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  build-binary:
-    name: build-binary (${{ matrix.os }}-${{ matrix.arch }})
-    needs: release-info
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.release-info.outputs.non_docker_matrix) }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.release-info.outputs.git_sha }}
-
-      - name: Build binary
-        uses: ./.github/actions/build-binary
-        with:
-          rust: ${{ needs.release-info.outputs.rust }}
-          target: ${{ matrix.target }}
-          platform: ${{ matrix.os }}-${{ matrix.arch }}
-          binary: ${{ matrix.binary }}
-        env:
-          CPR_VERSION: ${{ needs.release-info.outputs.version }}
-          CPR_GIT_SHA: ${{ needs.release-info.outputs.git_sha }}
-          CPR_BUILD_TIME: ${{ needs.release-info.outputs.build_time }}
-          CPR_BUILD_TYPE: ${{ needs.release-info.outputs.build_type }}
-
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: codex-proxy-rs-${{ matrix.os }}-${{ matrix.arch }}
-          path: dist/binaries/${{ matrix.os }}-${{ matrix.arch }}/
-          if-no-files-found: error
-          retention-days: 7
-
   package-assets:
-    needs: [release-info, frontend, build-docker-binary, build-binary]
+    needs: [release-info, frontend, build-docker-binary]
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
@@ -402,7 +313,7 @@ jobs:
       group: release-publication
       queue: max
     # 产物准备可与测试重叠，版本标签和 GitHub Release 必须等全部质量与镜像验证通过
-    needs: [release-info, quality, windows, security, package-assets, build-docker-image]
+    needs: [release-info, quality, security, package-assets, build-docker-image]
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:

@@ -315,10 +315,11 @@ store:
 
 ## Windows 二进制部署
 
-发行包提供 Windows x64（`windows_amd64`）和 ARM64（`windows_arm64`）版本，按运行机器的 CPU 架构选择。
+本 fork 仅发布 Linux 安装包；以下步骤适用于不含本 fork 补丁的上游 Windows 发行包。
+Windows x64（`windows_amd64`）和 ARM64（`windows_arm64`）按运行机器的 CPU 架构选择。
 需先准备可访问的 PostgreSQL 和 Redis，创建数据库及用户；使用数据库备份功能时，还需将匹配服务端版本的 `pg_dump` 加入 `PATH`
 
-从 [Release 附件](https://github.com/huweiATgithub/codex-proxy-rs/releases) 下载对应的
+从 [上游 Release 附件](https://github.com/zyycn/codex-proxy-rs/releases) 下载对应的
 `codex-proxy-rs_<version>_windows_<arch>.tar.gz`，解压后保留 `codex-proxy-rs.exe`、`web/dist`、`deploy` 和 `plugins/official` 的目录关系。
 在解压后的 `codex-proxy-rs` 目录中打开 PowerShell，首次安装时创建配置：
 
