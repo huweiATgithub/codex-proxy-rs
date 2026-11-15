@@ -71,7 +71,7 @@ module ReleaseMetadata
     raise "Release tag #{tag} does not match v#{value}" unless tag == "v#{value}"
     validate_notes(value)
     entries = platforms
-    docker, native = entries.partition { |entry| entry['docker'] == true }
+    docker = entries.select { |entry| entry['docker'] == true }
     # 补丁在各上游版本上重放，上一发行标签不一定是当前提交的祖先
     previous = git('tag', '--list', 'v*').lines.map(&:strip).filter_map do |candidate|
       next unless candidate.delete_prefix('v').match?(SEMVER)
@@ -86,8 +86,6 @@ module ReleaseMetadata
       'git_sha' => git('rev-parse', 'HEAD'),
       'platform_matrix' => JSON.generate('include' => entries),
       'docker_matrix' => JSON.generate('include' => docker),
-      'non_docker_matrix' => JSON.generate('include' => native),
-      'windows_matrix' => JSON.generate('include' => entries.select { |entry| entry['os'] == 'windows' }),
       'docker_platforms' => docker.map { |entry| entry['dockerPlatform'] }.join(','),
       'previous_tag' => previous,
       'prerelease' => prerelease?(value),
