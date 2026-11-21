@@ -48,9 +48,8 @@ README 安装 URL 的版本更新和维护规则调整并入 fork 配置主题�
 `release/version.yaml` 和 `release/notes.md` 保持对应上游 tag 的内容。
 `main` 上尚未发行的提交不合入这些版本分支。
 
-当前 fork 部署关闭管理端在线更新，发行流程不维护 `main:release/version.yaml` 的 `published` 索引，
-也不为省略索引修改更新器。发布工作流移除索引写回和索引恢复入口，以补丁 tag、公开 Release、镜像及附件作为发行验收依据。
-这项规则归入首个 fork 配置与维护主题；以后启用在线更新时，另行确定版本发现与旧版兼容方案。
+管理端从本 fork 的公开 GitHub Release 发现更新，通道与平台要求见[部署文档](../deploy/README.md#版本命名与升级规则)。
+运行仍依赖 `main:release/version.yaml` 发布索引的旧版本时，首次升级到采用 Release 发现的版本需手动部署。
 
 ## 准备远端并同步 main
 
