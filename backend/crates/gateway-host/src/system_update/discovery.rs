@@ -1,4 +1,4 @@
-//! 单个宿主实例共享发布索引和通道详情，版本探测只读内存
+//! 单个宿主实例共享发行版本列表和通道详情，版本探测只读内存
 
 use gateway_admin::model::system::{
     SystemUpdateChannel as Channel, SystemUpdateCheck as Check, SystemUpdateDetail,
@@ -9,10 +9,9 @@ use tokio::{
     sync::{Mutex, RwLock},
     time::{Instant, timeout},
 };
-use yaml_rust2::Yaml;
 
 use super::diagnostics::Diagnostics;
-use super::metadata::{Metadata, published_version};
+use super::metadata::Metadata;
 use super::release::{
     GitHubRelease, base_update_detail, detail_from_release, update_target_allowed,
 };
@@ -86,7 +85,7 @@ type ReleaseSlot = Arc<Slot<Option<Arc<GitHubRelease>>>>;
 #[derive(Default)]
 pub(super) struct ReleaseCache {
     metadata: Metadata,
-    index: Slot<Arc<Yaml>>,
+    versions: Slot<Arc<[Version]>>,
     releases: Mutex<VecDeque<(Version, ReleaseSlot)>>,
 }
 
@@ -99,10 +98,10 @@ impl ReleaseCache {
         if let Some(reason) = config.update_support_error() {
             return base_update_detail(config, channel, Some(reason), None);
         }
-        let Some(index) = self.index.cached(NORMAL).await else {
+        let Some(versions) = self.versions.cached(NORMAL).await else {
             return base_update_detail(config, channel, None, None);
         };
-        let summary = index.and_then(|index| candidate(config, channel, &index));
+        let summary = versions.and_then(|versions| candidate(config, channel, &versions));
         match summary {
             Ok((mut detail, target)) => {
                 if detail.has_update {
@@ -148,11 +147,11 @@ impl ReleaseCache {
             NORMAL
         };
         timeout(BUDGET, async {
-            let (index, cached) = self
-                .index
-                .get(age, self.metadata.index(config), diagnostics)
+            let (versions, cached) = self
+                .versions
+                .get(age, self.metadata.versions(config), diagnostics)
                 .await?;
-            let (mut detail, target) = candidate(config, channel, &index)?;
+            let (mut detail, target) = candidate(config, channel, &versions)?;
             detail.cached = cached;
             if check != Check::Summary || detail.has_update {
                 let (release, reused) = self.exact(config, &target, age, diagnostics).await?;
@@ -202,20 +201,20 @@ impl ReleaseCache {
         confirmed: &str,
         diagnostics: &Diagnostics,
     ) -> Result<Arc<GitHubRelease>, OperationError> {
-        // 执行时重新核对发布索引与精确 Release，不用浏览时的成功结果替代确认
+        // 安装前重新选择候选并复核精确 Release
         timeout(BUDGET, async {
-            let (index, _) = self
-                .index
-                .get(Duration::ZERO, self.metadata.index(config), diagnostics)
+            let (versions, _) = self
+                .versions
+                .get(Duration::ZERO, self.metadata.versions(config), diagnostics)
                 .await?;
-            let (detail, target) = candidate(config, channel, &index)?;
+            let (detail, target) = candidate(config, channel, &versions)?;
             if !detail.has_update || detail.latest_version != confirmed {
                 return Err(conflict("远端最新版本已变化，请重新检查并确认"));
             }
             self.exact(config, &target, Duration::ZERO, diagnostics)
                 .await?
                 .0
-                .ok_or_else(|| upstream("发布索引指向的 Release 不存在"))
+                .ok_or_else(|| upstream("目标 Release 不存在"))
         })
         .await
         .map_err(|_| upstream("安装前版本复核超时"))?
@@ -225,17 +224,25 @@ impl ReleaseCache {
 fn candidate(
     config: &SystemUpdateConfig,
     channel: Channel,
-    index: &Yaml,
+    versions: &[Version],
 ) -> Result<(SystemUpdateDetail, Version), OperationError> {
     let current = Version::parse(config.version.trim_start_matches('v'))
         .map_err(|_| conflict("当前版本号无效"))?;
-    let target = published_version(index, &current, channel)?;
     let mut detail = base_update_detail(config, channel, None, None);
-    if update_target_allowed(&current, &target, channel) {
-        detail.latest_version = target.to_string();
-        detail.has_update = true;
-        Ok((detail, target))
-    } else {
-        Ok((detail, current))
+    let Some(target) = versions
+        .iter()
+        .filter(|version| update_target_allowed(&current, version, channel))
+        .max_by(|left, right| left.cmp_precedence(right))
+    else {
+        return Ok((detail, current));
+    };
+    if versions
+        .iter()
+        .any(|version| version != target && version.cmp_precedence(target).is_eq())
+    {
+        return Err(upstream("GitHub 有多个发行版本并列为当前通道的最新版本"));
     }
+    detail.latest_version = target.to_string();
+    detail.has_update = true;
+    Ok((detail, target.clone()))
 }

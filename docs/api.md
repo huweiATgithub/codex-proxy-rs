@@ -3196,7 +3196,7 @@ Provider metadata 分别保留 `requestedServiceTier` 与 `upstreamServiceTier` 
 | 无可升级候选 | `false` | 当前版本 | 当前 Release 信息，未找到时为空 |
 | 构建不支持在线更新 | `false` | 当前版本 | 为空。跳过 Release 查询，通过 `updateSupported=false` 与 `unsupportedReason` 返回原因 |
 
-`summaryOnly=true` 优先于 `refresh`，按发布索引检查版本，仅对更高候选核对公开 Release 和当前平台附件；`notes`、`releaseUrl` 为空。详情或摘要检查失败时返回 `warning` 和 `hasUpdate=false`，此时 `latestVersion` 不代表已确认的通道版本。GitHub 限流时，`retryAt` 为最早可重试的 RFC 3339 时间，`retryAtDisplay` 按部署时区展示；其他情况两者均为 `null`。
+`summaryOnly=true` 优先于 `refresh`，从公开 GitHub Release 列表选择版本，仅对更高候选核对精确 Release 和当前平台附件；`notes`、`releaseUrl` 为空。详情或摘要检查失败时返回 `warning` 和 `hasUpdate=false`，此时 `latestVersion` 不代表已确认的通道版本。GitHub 限流时，`retryAt` 为最早可重试的 RFC 3339 时间，`retryAtDisplay` 按部署时区展示；其他情况两者均为 `null`。
 普通查询缓存 20 分钟，手动刷新最短间隔为 60 秒；临时错误缓存 60 秒，限流按来源退避。
 目标变化须重新检查并确认。下载与校验见[在线更新](../deploy/README.md#管理端在线更新)
 
