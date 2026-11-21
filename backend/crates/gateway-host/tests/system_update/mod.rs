@@ -503,7 +503,7 @@ async fn mount_release_json(
     assets: Vec<serde_json::Value>,
     times: Option<u64>,
 ) {
-    mount_index(server, fixture_index(version)).await;
+    mount_releases(server, &[version]).await;
     let mock = Mock::given(method("GET"))
         .and(path(format!(
             "/repos/owner/repository/releases/tags/v{version}"
@@ -515,24 +515,34 @@ async fn mount_release_json(
     }
 }
 
-const BUILD_VERSION: &str = "4.0.0-beta.1";
-const INDEX_PATH: &str = "/owner/repository/refs/heads/main/release/version.yaml";
+const RELEASES_PATH: &str = "/repos/owner/repository/releases";
 
 fn available_assets(version: &str) -> Vec<serde_json::Value> {
     [archive_name(version), "checksums.txt".to_owned()].into_iter()
         .map(|name| serde_json::json!({"name":name,"size":128,"browser_download_url":"https://github.com/owner/repository/releases/download/test/file"})).collect()
 }
 
-fn fixture_index(version: &str) -> serde_json::Value {
-    let major = version.split('.').next().unwrap();
-    let base = version.split('-').next().unwrap();
-    serde_json::json!({"version":BUILD_VERSION, "published": {major: {"stable": version,"beta":version,"rc":version,"alpha":version,"exp":{base: version}}}})
+fn listed_releases(versions: &[&str]) -> Vec<serde_json::Value> {
+    versions
+        .iter()
+        .map(|version| {
+            let prerelease = !semver::Version::parse(version)
+                .expect("version")
+                .pre
+                .is_empty();
+            serde_json::json!({
+                "tag_name": format!("v{version}"),
+                "draft": false,
+                "prerelease": prerelease,
+            })
+        })
+        .collect()
 }
 
-async fn mount_index(server: &MockServer, index: serde_json::Value) {
+async fn mount_releases(server: &MockServer, versions: &[&str]) {
     Mock::given(method("GET"))
-        .and(path(INDEX_PATH))
-        .respond_with(ResponseTemplate::new(200).set_body_json(index))
+        .and(path(RELEASES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(listed_releases(versions)))
         .mount(server)
         .await;
 }

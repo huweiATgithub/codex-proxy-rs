@@ -5,7 +5,7 @@ use super::*;
 #[tokio::test]
 async fn update_detail_should_record_decode_failure_while_returning_safe_warning() {
     let server = MockServer::start().await;
-    mount_index(&server, fixture_index(TARGET_VERSION)).await;
+    mount_releases(&server, &[TARGET_VERSION]).await;
     Mock::given(method("GET"))
         .and(path(format!(
             "/repos/owner/repository/releases/tags/v{TARGET_VERSION}"
@@ -113,7 +113,7 @@ async fn update_checks_should_follow_stage_promotion_and_experimental_isolation(
             );
             assert_eq!(detail.notes.is_some(), allowed);
             assert_eq!(detail.release_url.is_some(), allowed);
-            assert_eq!(detail.warning.is_none(), allowed);
+            assert!(detail.warning.is_none());
             let version = service.version().await.expect("version");
             assert_eq!(version.has_update, allowed);
             assert_eq!(version.update_channel, channel);
@@ -134,7 +134,7 @@ async fn update_detail_should_keep_current_release_notes_without_allowing_reinst
         let server = MockServer::start().await;
         let fixture = Fixture::new();
         let release_url = format!("https://github.com/owner/repository/releases/tag/v{current}");
-        mount_index(&server, fixture_index(current)).await;
+        mount_releases(&server, &[current]).await;
         Mock::given(method("GET"))
             .and(path(format!(
                 "/repos/owner/repository/releases/tags/v{current}"

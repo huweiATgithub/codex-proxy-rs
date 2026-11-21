@@ -7,8 +7,21 @@ use gateway_admin::model::system::SystemUpdateChannel::{Alpha, Beta, Experimenta
 async fn temporary_channel_should_filter_future_releases_without_changing_running_channel() {
     let server = MockServer::start().await;
     let fixture = Fixture::new();
-    mount_index(&server, serde_json::json!({"published":{"1":{"stable":"1.1.0","rc":"1.2.0-rc.1","beta":"1.3.0-beta.1","alpha":"1.4.0-alpha.1"}}})).await;
-    for version in ["1.1.0", "1.2.0-rc.1", "1.3.0-beta.1", "1.4.0-alpha.1"] {
+    let eligible = ["1.1.0", "1.2.0-rc.1", "1.3.0-beta.1", "1.4.0-alpha.1"];
+    let mut history = listed_releases(&["2.0.0", "1.5.0-exp.1"]);
+    history.extend(listed_releases(&eligible));
+    history.extend([
+        serde_json::json!({"tag_name":"v1.9.9", "draft":true, "prerelease":false}),
+        serde_json::json!({"tag_name":"v1.8.0", "draft":false, "prerelease":true}),
+        serde_json::json!({"tag_name":"v1.8.1-beta.1", "draft":false, "prerelease":false}),
+        serde_json::json!({"tag_name":"nightly", "draft":false, "prerelease":false}),
+    ]);
+    Mock::given(path(RELEASES_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(history))
+        .expect(1)
+        .mount(&server)
+        .await;
+    for version in eligible {
         Mock::given(method("GET"))
             .and(path(format!(
                 "/repos/owner/repository/releases/tags/v{version}"

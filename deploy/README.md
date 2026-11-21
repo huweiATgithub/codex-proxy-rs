@@ -960,12 +960,11 @@ docker compose -f deploy/compose.yaml build codex-proxy-rs
 
 普通通道只接收同一大版本内高于运行版本的候选，包括表中允许的小版本和补丁预发行。下载、安装或待重启期间不能切换通道
 
-更新器读取更新仓库 `main` 分支的 `release/version.yaml`。`version` 是源码构建版本，只有 `published` 中当前大版本和通道对应的版本才参与更新检查
-
-自定义更新仓库须提供这份清单和候选版本的公开 Release。发布工作流在安装包公开并通过校验后更新 `published`，需要具有写入 `main` 的权限
+更新器查询更新仓库的公开 GitHub Release 列表。发行标签使用 `vX.Y.Z` 及上表的预发行后缀，正式版与预发行标记须和标签一致。
+自定义更新仓库须提供对应的公开 Release 和安装附件
 
 提示有更新前会按精确 tag 核对候选 Release、当前平台包和校验文件，无需配置 GitHub 令牌。GitHub 限流时按提示稍后重试；
-也可从[发行页](https://github.com/zyycn/codex-proxy-rs/releases)下载平台归档，按[手动安装](#手动安装)升级
+也可从[发行页](https://github.com/huweiATgithub/codex-proxy-rs/releases)下载平台归档，按[手动安装](#手动安装)升级
 
 同一 `X.Y.Z-exp.N` 系列只用于同一轮实验，不能混用不同实验分支；变更基线即进入另一实验线，需手动迁移。
 exp 不进入正式版、alpha、beta 或 rc，普通实例也不能选择 Exp。
